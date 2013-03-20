@@ -73,8 +73,11 @@ ABUILD_UID=399
 ABUILD_GID=399
 
 DO_INIT=true
+DO_BUILD=true
 DO_LINT=
 DO_CHECKS=true
+SHORT_CIRCUIT=false
+NO_TOPDIR_CLEANUP=false
 CLEAN_BUILD=
 USE_SYSTEM_QEMU=
 KEEP_PACKS=
@@ -1131,6 +1134,9 @@ while test -n "$1"; do
       *-no*init)
 	DO_INIT=false
       ;;
+      *-no-build)
+	DO_BUILD=false
+      ;;
       *-no*checks)
 	DO_CHECKS=false
       ;;
@@ -1362,6 +1368,12 @@ while test -n "$1"; do
 	BUILD_RPM_BUILD_STAGE="$ARG"
 	shift
       ;;
+      *-short-circuit)
+        SHORT_CIRCUIT=true
+      ;;
+      *-no-topdir-cleanup)
+        NO_TOPDIR_CLEANUP=true
+      ;;
       *-useusedforbuild)
 	USEUSEDFORBUILD="--useusedforbuild"
       ;;
@@ -1467,6 +1479,11 @@ done
 
 check_for_ppc
 check_for_arm
+
+if [ "$SHORT_CIRCUIT" = true -a -z "$BUILD_RPM_BUILD_STAGE" ]; then
+    echo "--short-circuit needs a stage (use --stage)"
+    cleanup_and_exit 1
+fi
 
 if test "$VM_TYPE" = "lxc"; then
     VM_IMAGE=''
@@ -2678,6 +2695,9 @@ for SPECFILE in "${SPECFILES[@]}" ; do
 	mv $BUILD_ROOT/usr/lib/rpm/rpmrc $BUILD_ROOT/usr/lib/rpm/rpmrc_i586
 	sed -e 's/^buildarchtranslate: athlon.*/buildarchtranslate: athlon: i686/' -e 's/^buildarchtranslate: i686.*/buildarchtranslate: i686: i686/' < $BUILD_ROOT/usr/lib/rpm/rpmrc_i586 > $BUILD_ROOT/usr/lib/rpm/rpmrc
     fi
+    if test "$DO_BUILD" = false ; then
+        cleanup_and_exit 0
+    fi
 
     #
     # install dummy sign program if needed
@@ -2788,11 +2808,13 @@ for SPECFILE in "${SPECFILES[@]}" ; do
 
     #
     # now clean up RPM building directories
-    #
-    rm -rf "$BUILD_ROOT$TOPDIR"
-    for i in BUILD RPMS/`uname -m` RPMS/i386 RPMS/noarch SOURCES SPECS SRPMS BUILDROOT OTHER ; do
-	mkdir -p $BUILD_ROOT$TOPDIR/$i
-    done
+    if [ "$NO_TOPDIR_CLEANUP" = false ]; then
+        rm -rf "$BUILD_ROOT$TOPDIR"
+        for i in BUILD RPMS/`uname -m` RPMS/i386 RPMS/noarch SOURCES SPECS SRPMS BUILDROOT OTHER ; do
+            mkdir -p $BUILD_ROOT$TOPDIR/$i
+        done
+    fi
+
     chown -R "$ABUILD_UID:$ABUILD_GID" "$BUILD_ROOT$TOPDIR"
     check_exit
 
@@ -2968,7 +2990,7 @@ for SPECFILE in "${SPECFILES[@]}" ; do
 	test -x $BUILD_ROOT/usr/bin/rpmbuild || rpmbuild=rpm
 
 	# XXX: move _srcdefattr to macro file?
-	rpmbopts=("$BUILD_RPM_BUILD_STAGE" "--define" "_srcdefattr (-,root,root)")
+	rpmbopts=("--define" "_srcdefattr (-,root,root)")
 	if test "$rpmbuild" == "rpmbuild" ; then
                 # use only --nosignature for rpm v4
 	    rpmbopts[${#rpmbopts[@]}]="--nosignature"
@@ -2991,11 +3013,31 @@ for SPECFILE in "${SPECFILES[@]}" ; do
 
 	# su involves a shell which would require even more
 	# complicated quoting to bypass than this
-	toshellscript $rpmbuild \
-		"${definesnstuff[@]}" \
-		"${rpmbopts[@]}" \
-		"$TOPDIR/SOURCES/$SPECFILE" \
-		> $BUILD_ROOT/.build.command
+        if test "$SHORT_CIRCUIT" = false ; then
+            rpmbopts[${#rpmbopts[@]}]="$BUILD_RPM_BUILD_STAGE"
+            toshellscript $rpmbuild \
+                    "${definesnstuff[@]}" \
+                    "${rpmbopts[@]}" \
+                    "$TOPDIR/SOURCES/$SPECFILE" \
+                    > $BUILD_ROOT/.build.command
+        else
+            rpmbopts[${#rpmbopts[@]}]='--short-circuit'
+            buildopts="-bc -bi -bb -bs"
+            cmds=""
+            echo "#!/bin/sh -x" >$BUILD_ROOT/.build.command
+            echo "set -e" >>$BUILD_ROOT/.build.command
+            for opt in $buildopts
+            do
+                shellquote $rpmbuild  \
+                        "${definesnstuff[@]}" \
+                        "${rpmbopts[@]}" $opt \
+                        "$TOPDIR/SOURCES/$SPECFILE" \
+                        >> $BUILD_ROOT/.build.command
+                echo >>$BUILD_ROOT/.build.command
+                [ "$opt" == "$BUILD_RPM_BUILD_STAGE" ] && break
+            done
+        fi
+
 	chmod 755 $BUILD_ROOT/.build.command
 	check_exit
 	if test -n "$shell"; then
