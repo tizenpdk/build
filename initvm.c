@@ -212,10 +212,9 @@ enum okfail binfmt_register(char *datafile, char *regfile)
 
 
 		if (access(f[interpreter], X_OK) != 0) {
-			fprintf(stderr, 
-				"%s: line %d: interpreter '%s' not found,"
-				" ignoring\n", datafile, line, f[interpreter]);
-			goto skip;
+			fprintf(stderr,
+				"warning: %s: line %d: interpreter '%s' not "
+				"found\n", datafile, line, f[interpreter]);
 		}
 
 		if (!write_file_string(regfile, buf)) {
