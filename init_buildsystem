@@ -688,6 +688,10 @@ else
     #
     if check_use_emulator; then
 	    [ -n "$USE_SYSTEM_QEMU" ] && copy_qemu
+
+	    echo "clean up registered binfmt handlers"
+            sudo sh -c "echo -1 >/proc/sys/fs/binfmt_misc/status"
+
 	    echo "registering binfmt handlers for VM"
 
 	    if [ -x "$BUILD_DIR/initvm.$BUILD_HOST_ARCH" -a -e "$BUILD_DIR/qemu-reg" ]; then
