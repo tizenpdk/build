@@ -1,0 +1,103 @@
+#!/bin/bash
+
+: ${CACHE_DIR:=/var/cache/build}
+
+build_host_arch()
+{
+    : ${BUILD_HOST_ARCH:=`uname -m`}
+    # avoid multiple initvm.* helpers for i586 and i686
+    test i686 != "$BUILD_HOST_ARCH" || BUILD_HOST_ARCH=i586
+}
+
+set_build_arch()
+{
+    build_host_arch
+
+    if [ -z "$BUILD_ARCH" ]; then
+	BUILD_ARCH="$BUILD_HOST_ARCH"
+    fi
+
+    case $BUILD_ARCH in
+      armv7hl) BUILD_ARCH="armv7hl:armv7l:armv6hl:armv6l:armv5tel" ;;
+      armv7l) BUILD_ARCH="armv7l:armv6l:armv5tel" ;;
+      armv6hl) BUILD_ARCH="armv6hl:armv6l:armv5tel" ;;
+      armv6l) BUILD_ARCH="armv6l:armv5tel" ;;
+      armv5tel) BUILD_ARCH="armv5tel" ;;
+      i686) BUILD_ARCH="i686:i586:i486:i386" ;;
+      i586) BUILD_ARCH="i586:i486:i386" ;;
+      i486) BUILD_ARCH="i486:i386" ;;
+      i386) BUILD_ARCH="i386" ;;
+      ppc64) BUILD_ARCH="ppc64:ppc" ;;
+      ppc64le) BUILD_ARCH="ppc64le" ;;
+      sparc64v) BUILD_ARCH="sparc64v:sparc64:sparcv9v:sparcv9:sparcv8:sparc" ;;
+      sparc64) BUILD_ARCH="sparc64:sparcv9:sparcv8:sparc" ;;
+      sparcv9v) BUILD_ARCH="sparcv9v:sparcv9:sparcv8:sparc" ;;
+      sparcv9) BUILD_ARCH="sparcv9:sparcv8:sparc" ;;
+      sparcv8) BUILD_ARCH="sparcv8:sparc" ;;
+      sparc) BUILD_ARCH="sparc" ;;
+      x86_64) BUILD_ARCH="x86_64:i686:i586:i486:i386" ;;
+    esac
+    if test "$BUILD_ARCH" != "${BUILD_ARCH#i686}" ; then
+	cpuflags=`grep ^flags /proc/cpuinfo`
+	cpuflags="$cpuflags "
+	if test "$cpuflags" = "${cpuflags/ cx8 /}" -o "$cpuflags" = "${cpuflags/ cmov /}"; then
+	    echo "Your cpu doesn't support i686 rpms. Exit."
+	    cleanup_and_exit 1
+	fi
+    fi
+}
+
+check_exit()
+{
+    if test -e $BUILD_ROOT/exit; then
+	echo "exit ..."
+	cleanup_and_exit 1
+    fi
+}
+
+check_use_emulator()
+{
+    arch=":$BUILD_ARCH:"
+    if test "$arch" != "${arch/:$BUILD_HOST_ARCH:/}"; then
+        # native supported arch, no emulator
+        return 1
+    fi
+
+    # to run the qemu initialization in the XEN chroot, we need to
+    # register it with a static program or shell script
+    if test -e $BUILD_DIR/initvm.$BUILD_HOST_ARCH && \
+        test -e $BUILD_DIR/qemu-reg; then
+	chmod 0755 "$BUILD_DIR/initvm.$BUILD_HOST_ARCH"
+        if [ -z "$PREPARE_VM" ]; then
+             return 0	# chroot build, we need to run
+        fi
+        # emulator in vm already registered during startup
+    else
+        # XXX: error?
+        echo "Warning: cross compile not possible due to missing static binaries. please install build-initvm package for that purpose."
+        echo "         check that the right architecture is available for your build host, you need initvm.$BUILD_HOST_ARCH for this one."
+    fi
+    return 1
+}
+
+# usage:
+# progress_setup LIST
+# for I in $LIST; do
+#    progress_step LIST
+#    action $I 
+# done
+
+# $1 name of a textual list
+progress_setup() {
+    eval "$1__ARRAY__=(\$$1)"
+    eval "$1__INDEX__=1"
+    eval "$1__LENGTH__=\${#$1__ARRAY__[@]}"
+}
+
+# $1 name of a textual list
+# $2 optional, printf format for 2 numeric arguments (current, total)
+progress_step() {
+    local IDX=$1__INDEX__
+    local LEN=$1__LENGTH__
+    printf "${2-[%d/%d] }" $(($IDX++)) ${!LEN}
+}

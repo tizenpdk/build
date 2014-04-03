@@ -1,0 +1,170 @@
+#!/bin/bash
+# use this script to edit *.changes files
+#
+# based on changelog edit script from xqf
+#
+# Copyright (C) 2002 Ludwig Nussel
+# Copyright (C) 2009 SUSE Linux Products GmbH, Nuernberg, Germany.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+
+shopt -s nullglob
+
+if [ -z "$mailaddr" ]; then
+	domain=`dnsdomainname`
+	[ -z "$domain" ] && domain=localhost
+	mailaddr="$USER@$domain"
+fi
+
+EDITOR=${EDITOR:-vim}
+date=`LC_ALL=POSIX TZ=UTC date`
+
+if ! which mktemp > /dev/null 2>&1; then
+	echo "mktemp is required for this script to work"
+	exit 1
+fi
+
+while [ -n "$1" ]; do
+	case "$1" in
+		-m)
+			if [ $just_edit ]; then
+				echo "You cannot use -m and -e together!"
+				exit 1
+			fi
+			message="$2"
+			shift 2
+			;;
+		-e)
+			if [ -n "${message}" ]; then
+				echo "You cannot use -m and -e together!"
+				exit 1
+			fi
+			just_edit=true
+			shift 1
+			;;
+		--help)
+			echo "Usage: $0 [-m MESSAGE|-e] [filename[.changes]|path [file_with_comment]]"
+			echo
+			echo "Will use '$mailaddr' for changelog entries"
+			echo
+			echo "Options:"
+			echo "    -m MESSAGE    add MESSAGE to changes (not open an editor)"
+			echo "    -e            just open changes (cannot be used with -m)"
+			exit 0
+			;;
+		*) break ;;
+	esac
+done
+
+changelog="$1"
+content="$2"
+pkgpath=
+if [ -n "$changelog" -a -d "$changelog" ]; then
+	pkgpath="$changelog/"
+	changelog=''
+fi
+
+if [ -n "$changelog" ]; then
+	if [ "${changelog%.changes}" = "$changelog" ]; then
+		changelog="$changelog.changes"
+	fi
+else
+	changelog=($pkgpath*.changes)
+	if [ "${#changelog[@]}" -eq 1 ]; then
+		changelog="$changelog"
+	elif [ -n "$changelog" ]; then
+		echo "Choose one of ${changelog[@]}"
+		exit 1
+	fi
+fi
+
+if [ -z "$changelog" ]; then
+	changelog=($pkgpath*.spec)
+	if [ "${#changelog[@]}" -eq 1 ]; then
+		changelog=${changelog%.spec}.changes
+	elif [ -n "$changelog" ]; then
+		echo "Choose one of ${changelog[@]}"
+		exit 1
+	fi
+fi
+
+if [ -z "$changelog" ]; then
+	echo "no .changes and no .spec file found"
+	exit 1
+fi
+
+if [ ! -e "$changelog" ]; then
+	touch $changelog
+fi
+
+tmpfile=`mktemp -q $changelog.vctmp.XXXXXX`
+if [ $? -ne 0 ]; then
+	echo "$0: Can't create temp file, exiting..."
+	exit 1
+fi
+trap "rm -f \"$tmpfile\"" EXIT
+
+set +e
+
+{
+	if [ ! $just_edit ]; then
+		echo "-------------------------------------------------------------------"
+		echo "$date - $mailaddr"
+		echo
+	fi
+	if [ -n "$message" ]; then
+		echo "- $message"
+		echo
+	elif [ -n "$content" ]; then
+		cat "$content"
+		echo
+	elif [ ! $just_edit ]; then
+		echo "- "
+		echo
+		if [ -d .osc -a -n "$(which osc 2>/dev/null)" ]; then
+			OSC_STATUS="$(cd "$pkgpath" &> /dev/null; osc st)"
+			ADDED="$(sed -n 's/^A[[:blank:]]\+\([^[:blank:]].*\.\(patch\|diff\)\)$/  * \1/p' <<< "$OSC_STATUS")"
+			DELETED="$(sed -n 's/^D[[:blank:]]\+\([^[:blank:]].*\.\(patch\|diff\)\)$/  * \1/p' <<< "$OSC_STATUS")"
+			MODIFIED="$(sed -n 's/^M[[:blank:]]\+\([^[:blank:]].*\.\(patch\|diff\)\)$/  * \1/p' <<< "$OSC_STATUS")"
+			if [ -n "$ADDED" ]; then
+			    echo "- added patches:"
+			    echo "$ADDED"
+			fi
+			if [ -n "$DELETED" ]; then
+			    echo "- removed patches:"
+			    echo "$DELETED"
+			fi
+			if [ -n "$MODIFIED" ]; then
+			    echo "- modified patches:"
+			    echo "$MODIFIED"
+			fi
+		fi
+	fi
+	cat $changelog
+} >> "$tmpfile"
+
+if [ -z "$message" ]; then
+	set -- `md5sum "$tmpfile"`
+	chksum="$1"
+	$EDITOR +4 "$tmpfile"
+	set -- `md5sum "$tmpfile"`
+	if [ -z "$content" -a "$chksum" == "$1" ]; then
+		echo "no changes made"
+		exit 0
+	fi
+fi
+mode=`stat -c "%a" "$changelog"`
+mv "$tmpfile" "$changelog"
+chmod $mode "$changelog"
