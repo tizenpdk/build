@@ -29,17 +29,6 @@ Version:        2013.11.12
 Release:        3.1
 #!BuildIgnore:  build-mkbaselibs
 Source:         obs-build-2013.11.12.tar.gz
-Patch0:         0001-Update-uid-gid-of-build-root-if-uid-gid-is-not-match.patch
-Patch1:         0002-Add-option-keep-packs-to-keep-packages-already-in-bu.patch
-Patch2:         0003-support-incremental-build.patch
-Patch3:         0004-hide-password-if-user-pass-needed-for-packages-repos.patch
-Patch4:         0005-add-back-use-system-qemu.patch 
-Patch5:         0006-use-qemu-arm-static-binary.patch
-Patch6:         0007-fix-initvm-binary-search-issue.patch
-Patch7:         0008-Support-ExportFilter.patch
-Patch8:         0009-always-register-qemu-handler.patch
-Patch9:         0010-download-packages-to-different-dirs-for-each-build-i.patch
-Patch10:        0011-clean-up-old-registered-binfmt-handlers-before-use-i.patch
 
 BuildRoot:      %{_tmppath}/%{name}-%{version}-build
 # Manual requires to avoid hard require to bash-static
@@ -140,17 +129,6 @@ chroot or a secure virtualized
 
 %prep
 %setup -q -n obs-build-2013.11.12
-%patch0 -p1
-%patch1 -p1
-%patch2 -p1
-%patch3 -p1
-%patch4 -p1
-%patch5 -p1
-%patch6 -p1
-%patch7 -p1
-%patch8 -p1
-%patch9 -p1
-%patch10 -p1
 
 %build
 # initvm
