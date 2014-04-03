@@ -1,0 +1,28 @@
+From 563ac44d8a45cafa68f621f409547551a5176a0d Mon Sep 17 00:00:00 2001
+From: Zhang Qiang <qiang.z.zhang@intel.com>
+Date: Thu, 27 Feb 2014 10:57:44 +0800
+Subject: [PATCH 11/11] clean up old registered binfmt handlers before use it
+
+Change-Id: Ic3892e13ab28a1c83e885e0e087ab6675a4a3b71
+---
+ init_buildsystem |    4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/init_buildsystem b/init_buildsystem
+index e72613a..58ec929 100755
+--- a/init_buildsystem
++++ b/init_buildsystem
+@@ -688,6 +688,10 @@ else
+     #
+     if check_use_emulator; then
+ 	    [ -n "$USE_SYSTEM_QEMU" ] && copy_qemu
++
++	    echo "clean up registered binfmt handlers"
++            sudo sh -c "echo -1 >/proc/sys/fs/binfmt_misc/status"
++
+ 	    echo "registering binfmt handlers for VM"
+ 
+ 	    if [ -x "$BUILD_DIR/initvm.$BUILD_HOST_ARCH" -a -e "$BUILD_DIR/qemu-reg" ]; then
+-- 
+1.7.9.5
+

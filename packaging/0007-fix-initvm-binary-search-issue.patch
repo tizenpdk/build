@@ -1,0 +1,28 @@
+From 9c7b53621ca910e7211fc3bfe65013acf6ab23f0 Mon Sep 17 00:00:00 2001
+From: Zhang Qiang <qiang.z.zhang@intel.com>
+Date: Mon, 25 Nov 2013 10:26:06 +0800
+Subject: [PATCH 7/7] fix initvm binary search issue
+
+Change-Id: Ie101b8138fb6b429b29c03c42e7f393ab5f77979
+---
+ init_buildsystem |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/init_buildsystem b/init_buildsystem
+index 750797d..701bc51 100755
+--- a/init_buildsystem
++++ b/init_buildsystem
+@@ -689,8 +689,8 @@ else
+ 	    [ -n "$USE_SYSTEM_QEMU" ] && copy_qemu
+ 	    echo "registering binfmt handlers for VM"
+ 
+-	    if [ -x "$BUILD_DIR/initvm.`uname -m`" -a -e "$BUILD_DIR/qemu-reg" ]; then
+-	        $BUILD_DIR/initvm.`uname -m`
++	    if [ -x "$BUILD_DIR/initvm.$BUILD_HOST_ARCH" -a -e "$BUILD_DIR/qemu-reg" ]; then
++	        $BUILD_DIR/initvm.$BUILD_HOST_ARCH
+ 	    else
+ 	        echo "Warning: could not register binfmt handlers. Neither build-initvm nor /usr/sbin/qemu-binfmt-conf.sh exist"
+ 	    fi
+-- 
+1.7.9.5
+

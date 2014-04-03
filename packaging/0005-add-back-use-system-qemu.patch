@@ -1,0 +1,111 @@
+From 0113a5e1e052cb13c6ae0a53fe528caf3f858945 Mon Sep 17 00:00:00 2001
+From: Zhang Qiang <qiang.z.zhang@intel.com>
+Date: Fri, 22 Nov 2013 15:16:37 +0800
+Subject: [PATCH 5/5] add back --use-system-qemu
+
+Change-Id: Ia0b11954327407f576154552a96c406bd9e666ff
+---
+ init_buildsystem |   80 ++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 80 insertions(+)
+
+diff --git a/init_buildsystem b/init_buildsystem
+index c7dc95a..750797d 100755
+--- a/init_buildsystem
++++ b/init_buildsystem
+@@ -430,6 +430,85 @@ validate_cache_file()
+     fi
+ }
+ 
++check_copy_qemu()
++{
++    local arch
++
++    for arch in $EMULATOR_DEVS; do
++	if test -e $BUILD_DIR/qemu-$arch; then
++	    return 0
++	fi
++    done
++    return 1
++}
++
++copy_qemu()
++{
++    local path dest
++
++    echo "copying qemu"
++
++    mkdir -p $BUILD_ROOT/usr/bin
++
++    if check_copy_qemu; then
++
++	for path in $BUILD_DIR/qemu-*; do
++	    if file $path | grep -q static; then
++		dest="$BUILD_ROOT/usr/bin/${path##*/}"
++		if [ -f "$path" -a ! -x "$dest" ]; then
++		    echo -n " $path"		# report copy
++		    #echo install -m755 "$path" "$dest"
++		    install -m755 "$path" "$dest"
++		fi
++	    fi
++	done
++
++    else
++
++	for path in /usr/bin/qemu-*; do
++	    if file $path | grep -q static; then
++		dest="$BUILD_ROOT/usr/bin/${path##*/}"
++		if [ -f "$path" -a ! -x "$dest" ]; then
++		    echo -n " $path"		# report copy
++		    #echo install -m755 "$path" "$dest"
++		    install -m755 "$path" "$dest"
++		fi
++	    fi
++	done
++
++	if [ -e /usr/sbin/qemu-binfmt-conf.sh \
++	    -a ! -e $BUILD_ROOT/usr/sbin/qemu-binfmt-conf.sh ]; then
++	    echo " /usr/sbin/qemu-binfmt-conf.sh"		# report copy
++	    mkdir -p $BUILD_ROOT/usr/sbin
++	    install -m755 /usr/sbin/qemu-binfmt-conf.sh $BUILD_ROOT/usr/sbin
++	fi
++
++    fi
++    echo ""
++
++    # Below for backward compatibility when /.build/initvm is not present
++
++    if [ -n "$PREPARE_VM" ]; then
++	if [ -x /bin/bash-static -a -x /bin/mount-static ]; then
++	    echo " /bin/bash-static /bin/mount-static"	# report copy
++	    mkdir -p $BUILD_ROOT/bin
++	    install -m755 /bin/bash-static $BUILD_ROOT/bin
++	    install -m755 /bin/mount-static $BUILD_ROOT/bin
++	fi
++    fi
++}
++
++check_binfmt_registered()
++{
++    local arch
++    for arch in $EMULATOR_DEVS; do
++	if test -e /proc/sys/fs/binfmt_misc/$arch; then
++	    return 0
++	fi
++    done
++    return 1
++}
++
+ fail_exit()
+ {
+   cleanup_and_exit 1
+@@ -607,6 +686,7 @@ else
+     # register the QEMU emulator
+     #
+     if check_use_emulator; then
++	    [ -n "$USE_SYSTEM_QEMU" ] && copy_qemu
+ 	    echo "registering binfmt handlers for VM"
+ 
+ 	    if [ -x "$BUILD_DIR/initvm.`uname -m`" -a -e "$BUILD_DIR/qemu-reg" ]; then
+-- 
+1.7.9.5
+
