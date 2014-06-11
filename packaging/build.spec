@@ -71,7 +71,7 @@ Requires:       build-mkbaselibs
 %if 0%{?suse_version} > 1120 || 0%{?mdkversion}
 Recommends:     build-mkdrpms
 %endif
-Provides:   tizen-build = 20140227
+Provides:   tizen-build = 20140612
 %description
 This package provides a script for building RPMs for SUSE Linux in a
 chroot environment.
@@ -115,7 +115,7 @@ Group:          Development/Tools/Building
 Requires:       build
 BuildRequires:  gcc
 BuildRequires:  glibc-devel
-Provides:       tizen-build-initvm-%{initvm_arch} = 20140227
+Provides:       tizen-build-initvm-%{initvm_arch} = 20140612
 Obsoletes:      build-initvm
 %if 0%{?suse_version}
 BuildRequires:  glibc-devel-static
