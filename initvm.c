@@ -20,6 +20,7 @@
  *
  * AUTHOR
  *	James Perkins <james.perkins@linuxfoundation.org>
+ *	Adrian Schroeter <adrian@suse.de>
  */
 
 #include <sys/mount.h>
@@ -177,7 +178,7 @@ enum okfail binfmt_register(char *datafile, char *regfile)
 
 		if (buf[0] != ':')	/* non-data input line */
 		{
-			goto skip;
+			continue;
 		}
 
 		/* copy buf and tokenize :-seperated fields into f[] */
@@ -200,22 +201,41 @@ enum okfail binfmt_register(char *datafile, char *regfile)
 		{
 			fprintf(stderr, "%s: line %d: extra fields, ignoring."
 				" Content: %s", datafile, line, buf);
-			goto skip;
+			continue;
 		}
 
 		if (n < n_fields)
 		{
 			fprintf(stderr, "%s: line %d: missing fields, ignoring."
 				" Content: %s", datafile, line, buf);
-			goto skip;
+			continue;
 		}
 
+		int ret;
+                /* Is an interpreter for this arch already registered? */
+		snprintf(path, sizeof(path), SYSFS_BINFMT_MISC "/%s", f[name]);
+		ret=access(path, X_OK);
+			fprintf(stderr, 
+				"interpreter for '%s' is %d\n",
+				f[name], ret);
+		if (ret == 0) {
+#ifdef DEBUG
+			fprintf(stderr, 
+				"interpreter for '%s' already registered, ignoring\n",
+				f[name]);
+#endif /* DEBUG */
+			continue;
+		}
 
-		if (access(f[interpreter], X_OK) != 0) {
+                /* Does the interpreter exists? */
+		ret=access(f[interpreter], X_OK);
+		if (ret != 0) {
+#ifdef DEBUG
 			fprintf(stderr, 
 				"%s: line %d: interpreter '%s' not found,"
-				" ignoring\n", datafile, line, f[interpreter]);
-			goto skip;
+				" ignoring, return %d\n", datafile, line, f[interpreter], ret);
+#endif /* DEBUG */
+			continue;
 		}
 
 		if (!write_file_string(regfile, buf)) {
@@ -238,9 +258,6 @@ enum okfail binfmt_register(char *datafile, char *regfile)
 
 		DBG(fprintf(stderr, "dumping: %s\n", path));
 		DBG(dump_file(path));
-
-skip:
-		;
 	}
 
 
@@ -327,7 +344,7 @@ int main(int argc, char* argv[], char* env[])
 			exit(1);
 		}
 		execve(BUILD, args, env);
-		perror("execve");
+		perror("execve of "BUILD);
 		exit(1);
 	}
 

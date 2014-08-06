@@ -348,10 +348,20 @@ reexpand:
 	  }
 	  $macalt = $macros{$macname} unless defined $macalt;
 	  $macalt = '' if $mactest == -1;
-	  $line = "$macalt$line";
+	  if ($macalt =~ /%/) {
+	    push @expandstack, ('', $line, 1) if $line ne '';
+	    $line = $macalt;
+	  } else {
+	    $expandedline .= $macalt;
+	  }
 	} elsif ($mactest) {
 	  $macalt = '' if !defined($macalt) || $mactest == 1;
-	  $line = "$macalt$line";
+	  if ($macalt =~ /%/) {
+	    push @expandstack, ('', $line, 1) if $line ne '';
+	    $line = $macalt;
+	  } else {
+	    $expandedline .= $macalt;
+	  }
 	} else {
 	  $expandedline .= "%$macorig" unless $macname =~ /^-/;
 	}
@@ -360,12 +370,15 @@ reexpand:
       if (@expandstack) {
 	my $m = pop(@expandstack);
 	if ($m) {
-	  $optmacros = adaptmacros(\%macros, $optmacros, $m);
+	  $optmacros = adaptmacros(\%macros, $optmacros, $m) if ref $m;
 	  $expandstack[-2] .= $line;
-	  $line = '';
+	  $line = pop(@expandstack);
+	  $expandedline = pop(@expandstack);
+	} else {
+	  my $todo = pop(@expandstack);
+	  $expandedline = pop(@expandstack);
+	  push @expandstack, ('', $todo, 1) if $todo ne '';
 	}
-	$line = $line . pop(@expandstack);
-	$expandedline = pop(@expandstack);
 	goto reexpand;
       }
     }
@@ -565,6 +578,7 @@ my %rpmstag = (
   "EPOCH"          => 1003,
   "SUMMARY"        => 1004,
   "DESCRIPTION"    => 1005,
+  "BUILDTIME"      => 1006,
   "ARCH"           => 1022,
   "OLDFILENAMES"   => 1027,
   "SOURCERPM"      => 1044,
@@ -580,6 +594,7 @@ my %rpmstag = (
   "DIRINDEXES"     => 1116,
   "BASENAMES"      => 1117,
   "DIRNAMES"       => 1118,
+  "DISTURL"        => 1123,
 );
 
 sub rpmq {
@@ -842,6 +857,8 @@ sub query {
   push @tags, qw{EPOCH VERSION RELEASE ARCH};
   push @tags, qw{FILENAMES} if $opts{'filelist'};
   push @tags, qw{SUMMARY DESCRIPTION} if $opts{'description'};
+  push @tags, qw{DISTURL} if $opts{'disturl'};
+  push @tags, qw{BUILDTIME} if $opts{'buildtime'};
   my %res = rpmq($handle, @tags);
   return undef unless %res;
   my $src = $res{'SOURCERPM'}->[0];
@@ -894,6 +911,8 @@ sub query {
     $data->{'summary'} = $res{'SUMMARY'}->[0];
     $data->{'description'} = $res{'DESCRIPTION'}->[0];
   }
+  $data->{'buildtime'} = $res{'BUILDTIME'}->[0] if $opts{'buildtime'};
+  $data->{'disturl'} = $res{'DISTURL'}->[0] if $opts{'disturl'} && $res{'DISTURL'};
   return $data;
 }
 

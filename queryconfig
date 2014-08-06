@@ -1,0 +1,64 @@
+#!/usr/bin/perl -w
+
+BEGIN {
+  unshift @INC, ($::ENV{'BUILD_DIR'} || '/usr/lib/build');
+}
+
+use strict;
+
+use Build;
+
+my ($dist, $archs, $configdir, $debug, $type, $argument);
+
+$configdir = ($::ENV{'BUILD_DIR'} || '/usr/lib/build') . '/configs';
+
+while (@ARGV)  {
+  if ($ARGV[0] eq '--dist') {
+    shift @ARGV;
+    $dist = shift @ARGV;
+    next;
+  } elsif ($ARGV[0] eq '--archpath') {
+    shift @ARGV;
+    $archs = shift @ARGV;
+    next;
+  } elsif ($ARGV[0] eq '--configdir') {
+    shift @ARGV;
+    $configdir = shift @ARGV;
+    next;
+  } elsif (defined($type)) {
+    $argument = shift @ARGV; 
+  } else {
+    $type = shift @ARGV;
+  }
+}
+
+die("Please specify what to query\n") unless defined $type;
+
+my $cf = Build::read_config_dist($dist, $archs, $configdir);
+die("Unable to read config\n") unless $cf;
+
+if ($type eq 'buildflags') {
+  die("Specify which buildflag to query\n") unless $argument;
+  my $result = $cf->{"buildflags:$argument"};
+  print "$result\n" if defined $result;
+} elsif ($type eq 'target' || $type eq 'type' || $type eq 'binarytype' || $type eq 'buildengine' || $type eq 'rawmacros') {
+  print "$cf->{$type}\n" if $cf->{$type};
+} elsif ($type eq 'optflags') {
+  exit(0) unless $cf->{'optflags'};
+  my $all = $cf->{'optflags'}->{'*'};
+  $all = defined($all) && $all ne '' ? " $all" : '';
+  $all .= " -g" if $argument && $argument eq 'debug';
+  for (sort keys %{$cf->{'optflags'}}) {
+    next if $_ eq '*';
+    print "optflags: $_ $cf->{'optflags'}->{$_}$all\n";
+  }
+} elsif ($type eq 'substitute') {
+  die("Specify which substitute to query\n") unless $argument;
+  my @res =  @{$cf->{'substitute'}->{$argument} || []};
+  print join(' ', @res)."\n" if @res;
+} else {
+  die("unsupported query type: $type\n");
+}
+
+exit(0);
+

@@ -11,6 +11,7 @@ our $do_rpm;
 our $do_deb;
 our $do_kiwi;
 our $do_arch;
+our $do_livebuild;
 
 sub import {
   for (@_) {
@@ -18,8 +19,9 @@ sub import {
     $do_deb = 1 if $_ eq ':deb';
     $do_kiwi = 1 if $_ eq ':kiwi';
     $do_arch = 1 if $_ eq ':arch';
+    $do_livebuild = 1 if $_ eq ':livebuild';
   }
-  $do_rpm = $do_deb = $do_kiwi = $do_arch = 1 if !$do_rpm && !$do_deb && !$do_kiwi && !$do_arch;
+  $do_rpm = $do_deb = $do_kiwi = $do_arch = $do_livebuild = 1 if !$do_rpm && !$do_deb && !$do_kiwi && !$do_arch && !$do_livebuild;
   if ($do_deb) {
     require Build::Deb;
   }
@@ -28,6 +30,9 @@ sub import {
   }
   if ($do_arch) {
     require Build::Arch;
+  }
+  if ($do_livebuild) {
+    require Build::LiveBuild;
   }
 }
 
@@ -204,6 +209,7 @@ sub read_config {
   $config->{'fileprovides'} = {};
   $config->{'constraint'} = [];
   $config->{'expandflags'} = [];
+  $config->{'buildflags'} = [];
   for my $l (@spec) {
     $l = $l->[1] if ref $l;
     next unless defined $l;
@@ -220,7 +226,7 @@ sub read_config {
       }
       next;
     }
-    if ($l0 eq 'preinstall:' || $l0 eq 'vminstall:' || $l0 eq 'required:' || $l0 eq 'support:' || $l0 eq 'keep:' || $l0 eq 'prefer:' || $l0 eq 'ignore:' || $l0 eq 'conflict:' || $l0 eq 'runscripts:' || $l0 eq 'expandflags:') {
+    if ($l0 eq 'preinstall:' || $l0 eq 'vminstall:' || $l0 eq 'required:' || $l0 eq 'support:' || $l0 eq 'keep:' || $l0 eq 'prefer:' || $l0 eq 'ignore:' || $l0 eq 'conflict:' || $l0 eq 'runscripts:' || $l0 eq 'expandflags:' || $l0 eq 'buildflags:') {
       my $t = substr($l0, 0, -1);
       for my $l (@l) {
 	if ($l eq '!*') {
@@ -271,13 +277,15 @@ sub read_config {
 	  $config->{'order'}->{$l} = 1;
 	}
       }
-    } elsif ($l0 eq 'repotype:') { #type of generated repository data
+    } elsif ($l0 eq 'repotype:') { # type of generated repository data
       $config->{'repotype'} = [ @l ];
-    } elsif ($l0 eq 'type:') { #kind of packaging system (spec,dsc,arch,kiwi,...)
+    } elsif ($l0 eq 'type:') { # kind of recipe system (spec,dsc,arch,kiwi,...)
       $config->{'type'} = $l[0];
-    } elsif ($l0 eq 'binarytype:') { #rpm,deb,arch,...
+    } elsif ($l0 eq 'buildengine:') { # build engine (build,mock)
+      $config->{'buildengine'} = $l[0];
+    } elsif ($l0 eq 'binarytype:') { # kind of binary packages (rpm,deb,arch,...)
       $config->{'binarytype'} = $l[0];
-    } elsif ($l0 eq 'patterntype:') { #kind of generated patterns in repository
+    } elsif ($l0 eq 'patterntype:') { # kind of generated patterns in repository
       $config->{'patterntype'} = [ @l ];
     } elsif ($l0 eq 'release:') {
       $config->{'release'} = $l[0];
@@ -324,7 +332,7 @@ sub read_config {
   }
   if (!$config->{'binarytype'}) {
     $config->{'binarytype'} = 'rpm' if $config->{'type'} eq 'spec' || $config->{'type'} eq 'kiwi';
-    $config->{'binarytype'} = 'deb' if $config->{'type'} eq 'dsc';
+    $config->{'binarytype'} = 'deb' if $config->{'type'} eq 'dsc' || $config->{'type'} eq 'livebuild';
     $config->{'binarytype'} = 'arch' if $config->{'type'} eq 'arch';
     $config->{'binarytype'} ||= 'UNDEFINED';
   }
@@ -349,6 +357,13 @@ sub read_config {
       $config->{"expandflags:$1"} = $2;
     } else {
       $config->{"expandflags:$_"} = 1;
+    }
+  }
+  for (@{$config->{'buildflags'} || []}) {
+    if (/^([^:]+):(.*)$/s) {
+      $config->{"buildflags:$1"} = $2;
+    } else {
+      $config->{"buildflags:$_"} = 1;
     }
   }
   return $config;
@@ -394,30 +409,89 @@ sub do_subst_vers {
   return @res;
 }
 
+sub add_livebuild_packages {
+  my ($config, @deps) = @_;
+
+  if ($config->{'substitute'}->{'build-packages:livebuild'}) {
+    push @deps, @{$config->{'substitute'}->{'build-packages:livebuild'}};
+  } else {
+    # defaults live-build package dependencies base on 4.0~a26 gathered with:
+    # grep Check_package -r /usr/lib/live/build
+    push @deps, (
+      'apt-utils', 'dctrl-tools', 'debconf', 'dosfstools', 'e2fsprogs', 'grub',
+      'librsvg2-bin', 'live-boot', 'live-config', 'mtd-tools', 'parted',
+      'squashfs-tools', 'syslinux', 'syslinux-common', 'wget', 'xorriso',
+      'zsync' );
+  }
+  return @deps;
+}
+
 # Delivers all packages which get used for building
 sub get_build {
   my ($config, $subpacks, @deps) = @_;
+
+  @deps = add_livebuild_packages($config, @deps) if $config->{'type'} eq 'livebuild';
   my @ndeps = grep {/^-/} @deps;
+  my %ndeps = map {$_ => 1} @ndeps;
+  my @directdepsend;
+  if ($ndeps{'--directdepsend--'}) {
+    @directdepsend = @deps;
+    for (splice @deps) {
+      last if $_ eq '--directdepsend--';
+      push @deps, $_;
+    }
+    @directdepsend = grep {!/^-/} splice(@directdepsend, @deps + 1);
+  }
   my @extra = (@{$config->{'required'}}, @{$config->{'support'}});
   if (@{$config->{'keep'} || []}) {
     my %keep = map {$_ => 1} (@deps, @{$config->{'keep'} || []}, @{$config->{'preinstall'}});
     for (@{$subpacks || []}) {
-      push @ndeps, "-$_" unless $keep{$_};
+      next if $keep{$_};
+      push @ndeps, "-$_";
+      $ndeps{"-$_"} = 1;
     }
   } else {
     # new "empty keep" mode, filter subpacks from required/support
     my %subpacks = map {$_ => 1} @{$subpacks || []};
     @extra = grep {!$subpacks{$_}} @extra;
   }
-  my %ndeps = map {$_ => 1} @ndeps;
   @deps = grep {!$ndeps{$_}} @deps;
   push @deps, @{$config->{'preinstall'}};
   push @deps, @extra;
   @deps = grep {!$ndeps{"-$_"}} @deps;
   @deps = do_subst($config, @deps);
   @deps = grep {!$ndeps{"-$_"}} @deps;
-  @deps = expand($config, @deps, @ndeps);
+  if (@directdepsend) {
+    @directdepsend = do_subst($config, @directdepsend);
+    @directdepsend = grep {!$ndeps{"-$_"}} @directdepsend;
+    unshift @directdepsend, '--directdepsend--' if @directdepsend;
+  }
+  @deps = expand($config, @deps, @ndeps, @directdepsend);
   return @deps;
+}
+
+# return the package needed for setting up the build environment.
+# an empty result means that the packages from get_build should
+# be used instead.
+sub get_sysbuild {
+  my ($config, $buildtype) = @_;
+  my $engine = $config->{'buildengine'} || '';
+  $buildtype ||= $config->{'type'} || '';
+  my @sysdeps;
+  if ($engine eq 'mock' && $buildtype ne 'kiwi') {
+    @sysdeps = @{$config->{'substitute'}->{'system-packages:mock'} || []};
+    @sysdeps = ('mock', 'createrepo') unless @sysdeps;
+  } elsif ($buildtype eq 'livebuild') {
+    # packages used for build environment setup (build-recipe-livebuild deps)
+    @sysdeps = @{$config->{'substitute'}->{'system-packages:livebuild'} || []};
+    @sysdeps = ('apt-utils', 'cpio', 'dpkg-dev', 'live-build', 'lsb-release', 'tar') unless @sysdeps;
+  }
+  return () unless @sysdeps;
+  @sysdeps = Build::get_build($config, [], @sysdeps);
+  return @sysdeps unless $sysdeps[0];
+  shift @sysdeps;
+  @sysdeps = unify(@sysdeps, get_preinstalls($config));
+  return (1, @sysdeps);
 }
 
 # Delivers all packages which shall have an influence to other package builds (get_build reduced by support packages)
@@ -658,13 +732,23 @@ sub expand {
   my $requires = $config->{'requiresh'};
 
   my %xignore = map {substr($_, 1) => 1} grep {/^-/} @p;
+  my @directdepsend;
+  if ($xignore{'-directdepsend--'}) {
+    delete $xignore{'-directdepsend--'};
+    my @directdepsend = @p;
+    for my $p (splice @p) {
+      last if $p eq '--directdepsend--';
+      push @p, $p;
+    }
+    @directdepsend = grep {!/^-/} splice(@directdepsend, @p + 1);
+  }
   @p = grep {!/^-/} @p;
 
   my %p;		# expanded packages
   my %aconflicts;	# packages we are conflicting with
 
   # add direct dependency packages. this is different from below,
-  # because we add packages even if to dep is already provided and
+  # because we add packages even if the dep is already provided and
   # we break ambiguities if the name is an exact match.
   for my $p (splice @p) {
     my @q = @{$whatprovides->{$p} || addproviders($config, $p)};
@@ -682,6 +766,7 @@ sub expand {
     $p{$q[0]} = 1;
     $aconflicts{$_} = 1 for @{$conflicts->{$q[0]} || []};
   }
+  push @p, @directdepsend;
 
   my @pamb = ();
   my $doamb = 0;
@@ -881,6 +966,16 @@ sub add_all_providers {
 
 ###########################################################################
 
+sub recipe2buildtype {
+  my ($recipe) = @_;
+  return $1 if $recipe =~ /\.(spec|dsc|kiwi|livebuild)$/;
+  $recipe =~ s/.*\///;
+  $recipe =~ s/^_service:.*://;
+  return 'arch' if $recipe eq 'PKGBUILD';
+  return 'preinstallimage' if $recipe eq '_preinstallimage';
+  return undef;
+}
+
 sub show {
   my ($conffile, $fn, $field, $arch) = @ARGV;
   my $cf = read_config($arch, $conffile);
@@ -906,8 +1001,25 @@ sub parse {
   return Build::Deb::parse($cf, $fn, @args) if $do_deb && $fn =~ /\.dsc$/;
   return Build::Kiwi::parse($cf, $fn, @args) if $do_kiwi && $fn =~ /config\.xml$/;
   return Build::Kiwi::parse($cf, $fn, @args) if $do_kiwi && $fn =~ /\.kiwi$/;
-  return Build::Arch::parse($cf, $fn, @args) if $do_arch && $fn =~ /(^|\/|-)PKGBUILD$/;
-  return parse_preinstallimage($cf, $fn, @args) if $fn =~ /(^|\/|-)_preinstallimage$/;
+  return Build::LiveBuild::parse($cf, $fn, @args) if $do_livebuild && $fn =~ /\.livebuild$/;
+  my $fnx = $fn;
+  $fnx =~ s/.*\///;
+  $fnx =~ s/^[0-9a-f]{32,}-//;	# hack for OBS srcrep implementation
+  $fnx =~ s/^_service:.*://;
+  return Build::Arch::parse($cf, $fn, @args) if $do_arch && $fnx eq 'PKGBUILD';
+  return parse_preinstallimage($cf, $fn, @args) if $fnx eq '_preinstallimage';
+  return undef;
+}
+
+sub parse_typed {
+  my ($cf, $fn, $buildtype, @args) = @_;
+  $buildtype ||= '';
+  return Build::Rpm::parse($cf, $fn, @args) if $do_rpm && $buildtype eq 'spec';
+  return Build::Deb::parse($cf, $fn, @args) if $do_deb && $buildtype eq 'dsc';
+  return Build::Kiwi::parse($cf, $fn, @args) if $do_kiwi && $buildtype eq 'kiwi';
+  return Build::LiveBuild::parse($cf, $fn, @args) if $do_livebuild && $buildtype eq 'livebuild';
+  return Build::Arch::parse($cf, $fn, @args) if $do_arch && $buildtype eq 'arch';
+  return parse_preinstallimage($cf, $fn, @args) if $buildtype eq 'preinstallimage';
   return undef;
 }
 

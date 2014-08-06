@@ -1,0 +1,40 @@
+#
+# Arch specific functions.
+#
+# (C) 2014 SUSE, Inc
+#
+
+recipe_setup_arch() {
+    TOPDIR=/usr/src/packages
+    rm -rf "$BUILD_ROOT$TOPDIR"
+    mkdir -p "$BUILD_ROOT$TOPDIR"
+    mkdir -p "$BUILD_ROOT$TOPDIR/OTHER"
+    mkdir -p "$BUILD_ROOT$TOPDIR/SOURCES"
+    mkdir -p "$BUILD_ROOT/$TOPDIR/ARCHPKGS"
+    mkdir -p "$BUILD_ROOT/$TOPDIR/BUILD"
+    chown -R "$ABUILD_UID:$ABUILD_GID" "$BUILD_ROOT$TOPDIR"
+    cp -p "$MYSRCDIR"/* $BUILD_ROOT$TOPDIR/SOURCES/
+    {
+	echo 'source /etc/makepkg.conf'
+	printf '%s=%s\n' \
+	    BUILDDIR $TOPDIR/BUILD \
+	    PKGDEST $TOPDIR/ARCHPKGS
+    } > $BUILD_ROOT$TOPDIR/makepkg.conf
+}
+
+recipe_prepare_arch() {
+    echo "Preparing sources..."
+    _arch_recipe_makepkg -so "2>&1" ">/dev/null"
+}
+
+recipe_build_arch() {
+    _arch_recipe_makepkg -ef < /dev/null && BUILD_SUCCEEDED=true
+}
+
+recipe_resultdirs_arch() {
+    echo ARCHPKGS
+}
+
+_arch_recipe_makepkg() {
+    chroot $BUILD_ROOT su -lc "source /etc/profile; cd $TOPDIR/SOURCES && makepkg --config ../makepkg.conf $*" $BUILD_USER
+}

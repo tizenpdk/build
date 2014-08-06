@@ -1,0 +1,108 @@
+#
+# recipe specific functions for the build script
+#
+# (C) 2014 SUSE, Inc
+#
+
+KIWI_PARAMETERS=
+
+for i in spec dsc kiwi arch preinstallimage mock livebuild; do
+    . "$BUILD_DIR/build-recipe-$i"
+done
+
+recipe_setup() {
+    recipe_setup_$BUILDTYPE "$@"
+}
+
+recipe_prepare() {
+    recipe_prepare_$BUILDTYPE "$@"
+}
+
+recipe_build() {
+    recipe_build_$BUILDTYPE "$@"
+}
+
+recipe_resultdirs () {
+    recipe_resultdirs_$BUILDTYPE "$@"
+}
+
+recipe_parse_options() {
+    case ${PARAM/#--/-} in
+      -stage)
+	needarg
+	BUILD_RPM_BUILD_STAGE="$ARG"
+	shift
+	;;
+      -kiwi-parameter)
+	test -z "$ARG" && ARG="$1"
+	needarg
+	KIWI_PARAMETERS="$KIWI_PARAMETERS $ARG"
+	shift
+	;;
+      -*)
+	return 1
+	;;
+    esac
+    nextargs=("$@")
+    return 0
+}
+
+recipe_set_buildtype() {
+    BUILDTYPE=
+    case ${RECIPEFILE##_service:*:} in
+        *.spec|*.src.rpm) BUILDTYPE=spec ;;
+        *.dsc) BUILDTYPE=dsc ;;
+        *.kiwi) BUILDTYPE=kiwi ;;
+        PKGBUILD) BUILDTYPE=arch ;;
+        _preinstallimage) BUILDTYPE=preinstallimage ;;
+        *.livebuild) BUILDTYPE=livebuild ;;
+    esac
+    if test -z "$BUILDTYPE" ; then
+       echo "I don't know how to build $RECIPEFILE"
+       cleanup_and_exit 1
+    fi
+    # we can't query right after vm startup, so we put the BUILDENGINE in the build.data
+    if test -z "$RUNNING_IN_VM" ; then
+	BUILDENGINE=
+	if test -n "$BUILD_DIST" ; then
+	    BUILDENGINE=`queryconfig buildengine --dist "$BUILD_DIST" --configdir "$CONFIG_DIR" --archpath "$BUILD_ARCH"`
+	    test "$BUILDENGINE" = UNDEFINED && BUILDENGINE=
+	fi
+    fi
+    if test "$BUILDENGINE" = mock -a "$BUILDTYPE" = spec ; then
+	BUILDTYPE=mock
+    fi
+}
+
+# expands all directories into files
+expand_recipe_directories() {
+    local f t ff found
+    if test -z "$RECIPEFILES" ; then
+	set -- "`pwd`"
+    else
+	set -- "${RECIPEFILES[@]}"
+    fi
+    RECIPEFILES=()
+    for f in "$@" ; do
+	if test "$f" = "${f#/}" ; then
+	    f="`pwd`/$f"
+	fi
+	if test -d "$f" ; then
+	    for t in .spec .dsc PKGBUILD .kiwi .src.rpm .nosrc.rpm ; do
+		found=
+		for ff in "$f"/*$t ; do
+		    test -f "$ff" || continue
+		    RECIPEFILES=("${RECIPEFILES[@]}" "$ff")
+		    found=true
+		done
+		test -n "$found" && break
+	    done
+	else
+	    RECIPEFILES[${#RECIPEFILES[@]}]="$f"
+	fi
+    done
+    if test -z "$RECIPEFILES" ; then
+	echo "no recipe files found in $@. exit..."
+	cleanup_and_exit 1
+    fi
+}
