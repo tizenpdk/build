@@ -20,6 +20,7 @@ Name:           build
 Summary:        A Script to Build SUSE Linux RPMs
 License:        GPL-2.0+ and GPL-2.0
 Group:          Development/Tools/Building
+Epoch:          1
 %if 0%{?suse_version} >= 1230
 Version:        20131112
 %else
