@@ -1,4 +1,4 @@
-
+ 
 This script is used for building SUSE Linux RPMs in
 a clean and safe chroot'ed build environment.
 
