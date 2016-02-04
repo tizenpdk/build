@@ -255,6 +255,8 @@ preinstall()
 
 run_pkg_scripts()
 {
+    # need to change to $BUILD_ROOT
+    cd $BUILD_ROOT
     chroot $BUILD_ROOT /sbin/ldconfig 2>/dev/null
     for PKG in $PACKAGES_TO_RUNSCRIPTS ; do
 	if test -e "$BUILD_ROOT/.init_b_cache/scripts/$PKG.pre" ; then
