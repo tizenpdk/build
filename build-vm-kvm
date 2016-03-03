@@ -1,0 +1,228 @@
+#
+# kvm/qemu specific functions
+#
+################################################################
+#
+# Copyright (c) 1995-2014 SUSE Linux Products GmbH
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 or 3 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program (see the file COPYING); if not, write to the
+# Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA
+#
+################################################################
+
+kvm_bin=/usr/bin/qemu-kvm
+kvm_console=ttyS0
+
+# assume virtio support by default
+kvm_device=virtio-blk-pci
+kvm_options=
+
+kvm_check_ppc970() {
+    if ! grep -q -E '(kvm_rma_count.*kvm_hpt_count)|(kvm_hpt_count.*kvm_rma_count)' /proc/cmdline ; then 
+	echo "put kvm_rma_count=<VM number> or kvm_hpt_count=<> to your boot options"
+	cleanup_and_exit 3
+    fi
+}
+
+kvm_check_hugetlb() {
+    if ! grep -q "$HUGETLBFSPATH" /proc/mounts ; then
+	echo "hugetlbfs is not mounted to $HUGETLBFSPATH"
+	cleanup_and_exit 3
+    fi
+    local HUGETLBBLKSIZE=$(stat -f -c "%S" "$HUGETLBFSPATH")
+    HUGETLBBLKSIZE=$(( ${HUGETLBBLKSIZE:-0} / 1024 ))
+    if test "$HUGETLBBLKSIZE" -lt 1 -o ! -e  "/sys/kernel/mm/hugepages/hugepages-${HUGETLBBLKSIZE}kB" ; then
+	echo "could not determine hugetlbfs block size"
+	cleanup_and_exit 3
+    fi
+    local PAGES_FREE=$(cat /sys/kernel/mm/hugepages/hugepages-${HUGETLBBLKSIZE}kB/free_hugepages)
+    local PAGES_REQ=$(( ${VM_MEMSIZE:-64} * 1024 / $HUGETLBBLKSIZE ))
+    if test "$PAGES_FREE" -lt "$PAGES_REQ" ; then
+	echo "expected $PAGES_REQ to be available (have $PAGES_FREE)"
+	echo "please adjust nr_hugepages"
+	cleanup_and_exit 3
+    fi
+}
+
+vm_verify_options_kvm() {
+    vm_kernel=
+    vm_initrd=
+    
+    # overwrite some options for specific host architectures
+    case `uname -m` in
+	armv7l)
+	    kvm_bin="/usr/bin/qemu-system-arm"
+	    kvm_console=ttyAMA0
+	    kvm_options="-enable-kvm -M vexpress-a15 -dtb /boot/a15-guest.dtb -cpu cortex-a15"
+	    vm_kernel=/boot/zImage
+	    vm_initrd=/boot/initrd
+	    # prefer the guest kernel/initrd
+	    test -e /boot/zImage.guest && vm_kernel=/boot/zImage.guest
+	    test -e /boot/initrd.guest && vm_initrd=/boot/initrd.guest
+	    kvm_device=virtio-blk-device
+	    ;;
+	aarch64)
+	    kvm_bin="/usr/bin/qemu-system-aarch64"
+	    kvm_console=ttyAMA0
+	    kvm_options="-enable-kvm -M virt -cpu host"
+	    vm_kernel=/boot/Image
+	    vm_initrd=/boot/initrd
+	    # prefer the guest kernel/initrd
+	    test -e /boot/Image.guest && vm_kernel=/boot/Image.guest
+	    test -e /boot/initrd.guest && vm_initrd=/boot/initrd.guest
+	    kvm_device=virtio-blk-device
+	    ;;
+	ppc|ppcle|ppc64|ppc64le)
+	    kvm_bin="/usr/bin/qemu-system-ppc64"
+	    kvm_console=hvc0
+	    kvm_options="-enable-kvm -M pseries"
+	    grep -q PPC970MP /proc/cpuinfo && kvm_check_ppc970
+	    vm_kernel=/boot/vmlinux
+	    vm_initrd=/boot/initrd
+	    if test "$BUILD_ARCH" = ppc64le -a -e /boot/vmlinuxle ; then
+		vm_kernel=/boot/vmlinuxle
+		vm_initrd=/boot/initrdle
+	    fi
+	    grep -q "pSeries" /proc/cpuinfo && kvm_device=scsi-hd	# no virtio on pSeries
+	    grep -q "PowerNV" /proc/cpuinfo || kvm_device=scsi-hd	# no virtio on ppc != power7 yet
+	    ;;
+	s390|s390x)
+	    kvm_bin="/usr/bin/qemu-system-s390x"
+	    kvm_options="-enable-kvm"
+	    kvm_console=hvc0
+	    vm_kernel=/boot/image
+	    vm_initrd=/boot/initrd
+	    kvm_device=virtio-blk-ccw
+	    ;;
+    esac
+
+    # check if we can run kvm
+    if ! test -r /dev/kvm -a -x "$kvm_bin" ; then
+	echo "host does not support kvm"
+	echo "either the kvm kernel-module is not loaded or kvm is not installed or hardware virtualization is deactivated in the BIOS."
+	cleanup_and_exit 3
+    fi
+
+    # check hugepages
+    test -n "$HUGETLBFSPATH" -a "$VM_TYPE" = kvm && kvm_check_hugetlb
+
+    # set kernel
+    test -n "$VM_KERNEL" && vm_kernel="$VM_KERNEL"
+    test -z "$vm_kernel" && vm_kernel=/boot/vmlinuz
+
+    # set initrd
+    test -n "$VM_INITRD" && vm_initrd="$VM_INITRD"
+    if test -z "$vm_initrd" ; then
+	# find a nice default
+	if test -e "/boot/initrd-build" ; then
+	    vm_initrd="/boot/initrd-build"
+	elif test -e "/boot/initrd-virtio" ; then
+	    vm_initrd="/boot/initrd-virtio"
+	else
+	    vm_initrd="/boot/initrd"
+	    kvm_device=ide-hd
+	    # use /etc/sysconfig/kernel as indication if we have virtio
+	    if test -e /etc/sysconfig/kernel ; then
+		local im=$(INITRD_MODULES=; . /etc/sysconfig/kernel; echo "$INITRD_MODULES")
+		if test "$im" != "${im/virtio/}" ; then
+		    kvm_device=virtio-blk-pci
+		fi
+	    fi
+	fi
+    fi
+
+    case $kvm_device in
+	virtio*)
+	    qemu_rootdev=/dev/disk/by-id/virtio-0
+	    VM_SWAPDEV=/dev/disk/by-id/virtio-1
+	    ;;
+	*)
+	    qemu_rootdev=/dev/sda
+	    VM_SWAPDEV=/dev/sdb
+	    ;;
+    esac
+}
+
+vm_startup_kvm() {
+    qemu_bin="$kvm_bin"
+    qemu_args=(-drive file="$VM_IMAGE",if=none,id=disk,serial=0,cache=unsafe -device "$kvm_device",drive=disk)
+    if test -n "$VM_SWAP" ; then
+	qemu_args=("${qemu_args[@]}" -drive file="$VM_SWAP",if=none,id=swap,serial=1,cache=unsafe -device "$kvm_device",drive=swap)
+    fi
+
+    if test -n "$BUILD_JOBS" -a "$icecream" = 0 -a -z "$BUILD_THREADS" ; then
+	qemu_args=("${qemu_args[@]}" "-smp" "$BUILD_JOBS")
+    elif test -n "$BUILD_JOBS" -a -n "$BUILD_THREADS" ; then
+	qemu_args=("${qemu_args[@]}" "-smp" "$BUILD_JOBS,threads=$BUILD_THREADS")
+    fi
+    if test "$VM_TYPE" = kvm ; then
+	test "$kvm_console" != ttyAMA0 && kvm_options="$kvm_options -cpu host"
+	test -n "$HUGETLBFSPATH" && kvm_options="$kvm_options -mem-prealloc -mem-path $HUGETLBFSPATH"
+    fi
+    set -- $qemu_bin -no-reboot -nographic -vga none -net none $kvm_options \
+	-kernel $vm_kernel \
+	-initrd $vm_initrd \
+	-append "root=$qemu_rootdev panic=1 quiet no-kvmclock nmi_watchdog=0 rw rd.driver.pre=binfmt_misc elevator=noop console=$kvm_console init=$vm_init_script" \
+	${VM_MEMSIZE:+-m $VM_MEMSIZE} \
+	"${qemu_args[@]}"
+
+    if test "$PERSONALITY" != 0 ; then
+	# have to switch back to PER_LINUX to make qemu work
+	set -- linux64 "$@"
+    fi
+    export QEMU_AUDIO_DRV=none		# we do not want to have sound inside the VMs
+    echo "$@"
+    "$@"
+}
+
+vm_kill_kvm() {
+    if ! fuser -k -TERM "$VM_IMAGE" ; then
+	echo "could not kill build in $VM_IMAGE"
+	cleanup_and_exit 1
+    fi
+}
+
+vm_fixup_kvm() {
+    # check if we will use a kernel from the build root, in this case
+    # we assume the kernel does virtio
+    if test -z "$VM_KERNEL" -a -e "$BUILD_ROOT/.build.kernel.$VM_TYPE" ; then
+	# ide-hd is the non-virtio default
+	if test "$kvm_device" = ide-hd ; then
+	    kvm_device=virtio-blk-pci
+	    qemu_rootdev=/dev/disk/by-id/virtio-0
+	    VM_SWAPDEV=/dev/disk/by-id/virtio-1
+	fi
+    fi
+}
+
+vm_attach_root_kvm() {
+    :
+}
+
+vm_attach_swap_kvm() {
+    :
+}
+
+vm_detach_root_kvm() {
+    :
+}
+
+vm_detach_swap_kvm() {
+    :
+}
+
+vm_cleanup_kvm() {
+    :
+}
+

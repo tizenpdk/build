@@ -1,0 +1,69 @@
+#!/bin/bash
+#
+# This is a template for a livebuild_pre_run script. These scripts are
+# executed by build_livebuild.sh in the chroot environment.
+#
+
+################################################################
+#
+# Copyright (c) 1995-2014 SUSE Linux Products GmbH
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 or 3 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program (see the file COPYING); if not, write to the
+# Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA
+#
+################################################################
+
+fix_debootstrap()
+{
+    # debootstrap in Debian 7.0 does not like dash
+
+    if [ -x /usr/sbin/debootstrap ] ; then
+	sed -i 's|^#!/bin/sh|#!/bin/bash|' /usr/sbin/debootstrap
+    fi
+}
+
+fix_lb_bootstrap_archive-keys()
+{
+    if [ -e /usr/lib/live/build/bootstrap_archive-keys ] ; then
+	sed -i '/apt-get update/{ s/^/#/ }' \
+	    /usr/lib/live/build/bootstrap_archive-keys
+    fi
+}
+
+#
+# main
+#
+
+: ${TOPDIR:=/usr/src/packages}
+
+# Distribution and live-build specific hooks
+fix_debootstrap
+fix_lb_bootstrap_archive-keys
+
+# Expand configuration based on defaults
+cd $TOPDIR/LIVEBUILD_ROOT && lb config || exit 1
+
+# Replace all occurances of LB_MIRROR with local repository
+sed -i "s|^\(LB_MIRROR_[^=]\+=\).*|\1\"file:$TOPDIR/SOURCES/repos/\"|" \
+    $TOPDIR/LIVEBUILD_ROOT/config/bootstrap
+sed -i "s|^\(LB_PARENT_MIRROR_[^=]\+=\).*|\1\"file:$TOPDIR/SOURCES/repos/\"|" \
+    $TOPDIR/LIVEBUILD_ROOT/config/bootstrap
+
+# Prevent debootstrap from cleaning our cache
+sed -i 's|^\(LB_CACHE_PACKAGES=\).*|\1"false"|' \
+    $TOPDIR/LIVEBUILD_ROOT/config/common
+
+# Disable GPG checking
+sed -i 's|^\(LB_APT_SECURE=\).*|\1"false"|' \
+    $TOPDIR/LIVEBUILD_ROOT/config/common

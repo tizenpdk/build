@@ -1,0 +1,93 @@
+#
+# binary package specific functions for the build script
+#
+################################################################
+#
+# Copyright (c) 1995-2014 SUSE Linux Products GmbH
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program (see the file COPYING); if not, write to the
+# Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA
+#
+################################################################
+
+for i in rpm deb arch ; do
+    . "$BUILD_DIR/build-pkg-$i"
+done
+
+pkg_initdb() {
+    pkg_initdb_$PSUF "$@"
+}
+
+pkg_prepare() {
+    pkg_prepare_$PSUF "$@"
+}
+
+pkg_install() {
+    pkg_install_$PSUF "$@"
+}
+
+pkg_verify_installed() {
+    pkg_verify_installed_$PSUF "$@"
+}
+
+pkg_erase() {
+    pkg_erase_$PSUF "$@"
+}
+
+pkg_cumulate() {
+    pkg_cumulate_$PSUF "$@"
+}
+
+pkg_finalize() {
+    pkg_finalize_$PSUF "$@"
+}
+
+pkg_preinstall() {
+    pkg_preinstall_$PSUF "$@"
+}
+
+pkg_runscripts() {
+    pkg_runscripts_$PSUF "$@"
+}
+
+pkg_autodetect_type() {
+    if test -n "$PREINSTALL_IMAGE" ; then
+	echo "cannot autodetect build type when using a preinstall image" >&2
+	cleanup_and_exit 1
+    fi
+    PSUF=
+    test -e $BUILD_ROOT/.init_b_cache/rpms/rpm.rpm && PSUF=rpm
+    test -e $BUILD_ROOT/.init_b_cache/rpms/dpkg.deb && PSUF=deb
+    test -e $BUILD_ROOT/.init_b_cache/rpms/pacman.arch && PSUF=arch
+    if test -z "$PSUF" ; then
+	echo "could not autodetect package type" >&2
+	cleanup_and_exit 1
+    fi
+}
+
+pkg_set_type() {
+    PSUF=`queryconfig binarytype --dist "$BUILD_DIST" --configdir "$CONFIG_DIR" --archpath "$BUILD_ARCH"`
+    test "$PSUF" = UNDEFINED && PSUF=
+    case "$PSUF" in
+	rpm|deb|arch)
+	    ;;
+	'')
+	    pkg_autodetect_type
+	    ;;
+	*)
+            echo "unknown package type '$PSUF'" >&2
+            cleanup_and_exit 1
+	    ;;
+    esac
+}

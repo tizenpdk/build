@@ -1,5 +1,25 @@
 #!/usr/bin/perl -w
 
+################################################################
+#
+# Copyright (c) 1995-2014 SUSE Linux Products GmbH
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 or 3 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program (see the file COPYING); if not, write to the
+# Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA
+#
+################################################################
+
 BEGIN {
   unshift @INC, ($::ENV{'BUILD_DIR'} || '/usr/lib/build');
 }
@@ -18,6 +38,8 @@ sub expand {
 }
 
 my ($dist, $buildroot, $rpmdeps, $archs, $configdir, $release, $changelog);
+
+$configdir = ($::ENV{'BUILD_DIR'} || '/usr/lib/build') . '/configs';
 
 while (@ARGV)  {
   if ($ARGV[0] eq '--root') {
@@ -142,6 +164,37 @@ for my $line (@$xspec) {
       $line =~ s/<CI_CNT>/0/;
       $line =~ s/<B_CNT>/0/;
     }
+
+    if ($cf->{'releasesuffix'}) {
+      my $suffix = $cf->{'releasesuffix'};
+      if ($suffix =~ /^file:(.+)$/) {
+	my $file = $1;
+	if ($file =~ /\//s || $file =~ /^\./) {
+	  $suffix = "error:illegal release suffix";
+	} else {
+	  if (open(RP, '<', "$specdir$file")) {
+	    $suffix = "error:no suffix in $file";
+	    for (<RP>) {
+	      chomp;
+	      s/^\s+//;
+	      s/\s+$//;
+	      $suffix = $_ if $_ && !/^#/;
+	    }
+	    close RP;
+	  } else {
+	    $suffix = "error:$file file does not exist";
+	  }
+	}
+      }
+      if ($suffix =~ /^error:(.*)$/) {
+	$suffix = $1;
+	$suffix =~ s/^\s+//;
+	$suffix =~ s/\s+$//;
+	$suffix = "Error: $suffix";
+      }
+      $line =~ s/^(Release\s*:\s*.*?)\s*$/$1$suffix/i if $suffix;
+    }
+
     # this is to be compatible to legacy autobuild.
     # you can specify a releaseprg in the project configuration,
     # if your package contains this file it is executed and its

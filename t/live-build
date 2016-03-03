@@ -1,0 +1,72 @@
+#!/usr/bin/perl -w -I ..
+
+################################################################
+#
+# Copyright (c) 1995-2014 SUSE Linux Products GmbH
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 or 3 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program (see the file COPYING); if not, write to the
+# Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA
+#
+################################################################
+
+use strict;
+use Test::More tests => 5;
+use Build::LiveBuild;
+
+use Data::Dumper;
+use Digest::MD5 qw(md5_hex);
+
+my $VAR = '
+
+
+a
+
+b
+#comment
+
+! whatever
+';
+
+is(Build::LiveBuild::filter($VAR), 'a
+b
+');
+
+
+my $DEB_ARCHIVE = '
+# comment
+deb obs://openSUSE.org:Debian:7.0/standard wheezy main contrib
+deb-src obs://openSUSE.org:Debian:7.0/standard wheezy main contrib
+
+';
+my $DEB_ARCHIVE_RESULT = "\$VAR1 = 'openSUSE.org:Debian:7.0/standard';
+";
+
+is(Dumper(Build::LiveBuild::parse_archive($DEB_ARCHIVE)), $DEB_ARCHIVE_RESULT);
+
+my $config = {};
+$Data::Dumper::Sortkeys = 1;
+is(md5_hex(Dumper(Build::LiveBuild::parse( $config, 'standard.livebuild'))),
+   '9cfb69e8f0581293f207342edacd19e7');
+
+#print Dumper(Build::LiveBuild::parse( $config, 'standard.livebuild'));
+
+is(md5_hex(Dumper(Build::LiveBuild::parse( $config, 'directory.livebuild'))),
+   'bc803d2b4a375d9a02b3242117f6c93a');
+
+#print Dumper(Build::LiveBuild::parse( $config, 'directory.livebuild'));
+
+is(md5_hex(Dumper(Build::LiveBuild::parse( $config, 'bad.livebuild'))),
+   '1e596160978007d1014e9c5e38574700');
+
+#print Dumper(Build::LiveBuild::parse( $config, 'bad.livebuild'));

@@ -1,5 +1,25 @@
 #!/usr/bin/perl -w
 
+################################################################
+#
+# Copyright (c) 1995-2014 SUSE Linux Products GmbH
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 or 3 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program (see the file COPYING); if not, write to the
+# Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA
+#
+################################################################
+
 use Net::SSL ();
 BEGIN {
   $ENV{PERL_LWP_SSL_VERIFY_HOSTNAME} = 0,
@@ -24,11 +44,11 @@ my $ua = LWP::UserAgent->new(
 for my $url (@ARGV) {
   if ($url =~ /^zypp:\/\/([^\/]*)\/?/) {
     use Build::Zypp;
-    my $repo = Build::Zypp::parsecfg($1);
+    my $repo = Build::Zypp::parserepo($1);
     die "can't parse $1\n" unless $repo;
     die "missing url in repo ".$repo->{'name'}."\n" unless exists $repo->{'baseurl'};
     my $u = $repo->{'baseurl'};
-    $u .= '/' unless substr($u, -1, 1) eq '/';
+    $u .= '/' unless $u =~ /\/$/;
     $url =~ s/^zypp:\/\/[^\/]*\/*//;
     $url = URI->new($u.$url);
     if ($url->scheme eq 'dir') {
