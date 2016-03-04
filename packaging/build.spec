@@ -168,8 +168,8 @@ test -e default.conf
 /usr/lib/build
 %config(noreplace) /usr/lib/build/emulator/emulator.sh
 %{_mandir}/man1/build.1*
-%{_mandir}/man1/unrpm.1*
-%{_mandir}/man1/vc.1*
+#%{_mandir}/man1/unrpm.1*
+#%{_mandir}/man1/vc.1*
 %exclude /usr/lib/build/initvm.*
 
 %if 0%{?suse_version} > 1120 || ! 0%{?suse_version}
