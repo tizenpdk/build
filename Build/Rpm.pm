@@ -1062,7 +1062,7 @@ sub queryinstalled {
 
   $root = '' if !defined($root) || $root eq '/';
   local *F;
-  my $dochroot = $root ne '' && !$opts{'nochroot'} && !$< && (-x "$root/usr/bin/rpm" || -x "$root/bin/rpm") ? 1 : 0;
+  my $dochroot = $root ne '' && !$opts{'nochroot'} && !$< ? 1 : 0;
   my $pid = open(F, '-|');
   die("fork: $!\n") unless defined $pid;
   if (!$pid) {

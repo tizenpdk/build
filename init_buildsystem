@@ -419,6 +419,74 @@ can_reuse_cached_package() {
     return 0
 }
 
+check_copy_qemu()
+{
+    local arch
+
+    for arch in $EMULATOR_DEVS; do
+	if test -e $BUILD_DIR/qemu-$arch; then
+	    return 0
+	fi
+    done
+    return 1
+}
+
+copy_qemu()
+{
+    local path dest
+
+    echo "copying qemu"
+
+    mkdir -p $BUILD_ROOT/usr/bin
+
+    if check_copy_qemu; then
+
+	for path in $BUILD_DIR/qemu-*; do
+	    if file $path | grep -q static; then
+		dest="$BUILD_ROOT/usr/bin/${path##*/}"
+		if [ -f "$path" -a ! -x "$dest" ]; then
+		    echo -n " $path"		# report copy
+		    #echo install -m755 "$path" "$dest"
+		    install -m755 "$path" "$dest"
+		fi
+	    fi
+	done
+
+    else
+
+	for path in /usr/bin/qemu-*; do
+	    if file $path | grep -q static; then
+		dest="$BUILD_ROOT/usr/bin/${path##*/}"
+		if [ -f "$path" -a ! -x "$dest" ]; then
+		    echo -n " $path"		# report copy
+		    #echo install -m755 "$path" "$dest"
+		    install -m755 "$path" "$dest"
+		fi
+	    fi
+	done
+
+	if [ -e /usr/sbin/qemu-binfmt-conf.sh \
+	    -a ! -e $BUILD_ROOT/usr/sbin/qemu-binfmt-conf.sh ]; then
+	    echo " /usr/sbin/qemu-binfmt-conf.sh"		# report copy
+	    mkdir -p $BUILD_ROOT/usr/sbin
+	    install -m755 /usr/sbin/qemu-binfmt-conf.sh $BUILD_ROOT/usr/sbin
+	fi
+
+    fi
+    echo ""
+
+    # Below for backward compatibility when /.build/initvm is not present
+
+    if [ -n "$PREPARE_VM" ]; then
+	if [ -x /bin/bash-static -a -x /bin/mount-static ]; then
+	    echo " /bin/bash-static /bin/mount-static"	# report copy
+	    mkdir -p $BUILD_ROOT/bin
+	    install -m755 /bin/bash-static $BUILD_ROOT/bin
+	    install -m755 /bin/mount-static $BUILD_ROOT/bin
+	fi
+    fi
+}
+
 set_build_arch
 
 trap fail_exit EXIT
@@ -526,6 +594,7 @@ else
     #
     if test -z "$PREPARE_VM" ; then
 	if check_use_emulator ; then
+	    copy_qemu
 	    echo "registering binfmt handlers for cross build"
 	    "$BUILD_DIR/$INITVM_NAME"
 	    echo 0 > /proc/sys/vm/mmap_min_addr
@@ -912,6 +981,17 @@ for PKG in $MAIN_LIST ; do
 	    preinstall "$PKG"
 	fi
 	check_exit
+    fi
+    
+    export ADDITIONAL_PARAMS=
+    if test "$USE_FORCE" = true ; then
+	export ADDITIONAL_PARAMS="$ADDITIONAL_PARAMS --force"
+    fi
+    # work around for cross-build installs, we must not overwrite the running rpm
+    if test "$PKG" = rpm ; then
+	for i in $BUILD_ROOT/.init_b_cache/preinstalls/rpm-x86-* ; do
+	    test -e "$i" && ADDITIONAL_PARAMS="$ADDITIONAL_PARAMS --justdb"
+	done
     fi
     
     if pkg_cumulate ; then

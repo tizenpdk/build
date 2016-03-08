@@ -109,16 +109,6 @@ pkg_cumulate_rpm() {
 }
 
 pkg_install_rpm() {
-    export ADDITIONAL_PARAMS=
-    if test "$USE_FORCE" = true ; then
-	export ADDITIONAL_PARAMS="$ADDITIONAL_PARAMS --force"
-    fi
-    # work around for cross-build installs, we must not overwrite the running rpm
-    if test "$PKG" = rpm ; then
-	for i in $BUILD_ROOT/.init_b_cache/preinstalls/rpm-x86-* ; do
-	    test -e "$i" && ADDITIONAL_PARAMS="$ADDITIONAL_PARAMS --justdb"
-	done
-    fi
     ( chroot $BUILD_ROOT rpm --ignorearch --nodeps -U --oldpackage --ignoresize $RPMCHECKOPTS \
 		$ADDITIONAL_PARAMS .init_b_cache/$PKG.rpm 2>&1 || \
 	  touch $BUILD_ROOT/exit ) | \
