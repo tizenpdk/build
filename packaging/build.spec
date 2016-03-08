@@ -24,7 +24,7 @@ Epoch:          1
 %if 0%{?suse_version} >= 1230
 Version:        20150115 
 %else
-Version:        2013.11.12
+Version:        2015.01.15
 %else
 %endif
 Release:        3.1
