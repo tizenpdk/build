@@ -24,7 +24,7 @@ Epoch:          1
 %if 0%{?suse_version} >= 1230
 Version:        20150115 
 %else
-Version:        2015.01.15
+Version:        20150115
 %else
 %endif
 Release:        3.1
@@ -72,7 +72,7 @@ Requires:       build-mkbaselibs
 %if 0%{?suse_version} > 1120 || 0%{?mdkversion}
 Recommends:     build-mkdrpms
 %endif
-Provides:   tizen-build = 20140815
+Provides:   tizen-build = 20160311
 %description
 This package provides a script for building RPMs for SUSE Linux in a
 chroot environment.
