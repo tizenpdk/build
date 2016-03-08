@@ -891,23 +891,25 @@ pkg_prepare
 #
 # delete all packages we don't want
 #
-mkdir -p $BUILD_ROOT/.init_b_cache/todelete
-for PKG in $BUILD_ROOT/.init_b_cache/alreadyinstalled/* ; do
-    PKG=${PKG##*/}
-    test "$PKG" = "*" && continue
-    ln $BUILD_ROOT/.init_b_cache/alreadyinstalled/$PKG $BUILD_ROOT/.init_b_cache/todelete/$PKG
-done
-for PKG in $PACKAGES_TO_INSTALL; do
-    rm -f $BUILD_ROOT/.init_b_cache/todelete/$PKG
-done
-for PKG in $BUILD_ROOT/.init_b_cache/todelete/* ; do
-    PKG=${PKG##*/}
-    test "$PKG" = "*" && continue
-    echo "deleting $PKG"
-    pkg_erase
-    check_exit
-done
-rm -rf "$BUILD_ROOT/.init_b_cache/todelete"
+if [ -z "$KEEP_PACKS" ]; then
+    mkdir -p $BUILD_ROOT/.init_b_cache/todelete
+    for PKG in $BUILD_ROOT/.init_b_cache/alreadyinstalled/* ; do
+        PKG=${PKG##*/}
+        test "$PKG" = "*" && continue
+        ln $BUILD_ROOT/.init_b_cache/alreadyinstalled/$PKG $BUILD_ROOT/.init_b_cache/todelete/$PKG
+    done
+    for PKG in $PACKAGES_TO_INSTALL; do
+        rm -f $BUILD_ROOT/.init_b_cache/todelete/$PKG
+    done
+    for PKG in $BUILD_ROOT/.init_b_cache/todelete/* ; do
+        PKG=${PKG##*/}
+        test "$PKG" = "*" && continue
+        echo "deleting $PKG"
+        rpm_e "$PKG"
+        check_exit
+    done
+    rm -rf "$BUILD_ROOT/.init_b_cache/todelete"
+fi
 
 rm -rf "$BUILD_ROOT/.init_b_cache/preinstalls"
 mkdir -p "$BUILD_ROOT/.init_b_cache/preinstalls"
