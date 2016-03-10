@@ -379,7 +379,7 @@ downloadpkg() {
 	cleanup_and_exit 1
     fi
 
-    local destdir="$cachedir/tmp"
+    local destdir="$cachedir/tmp_$$"
     mkdir -p "$destdir"
     echo "downloading $url ... ";
     $BUILD_DIR/download "$destdir" "$url" || cleanup_and_exit 1
@@ -400,6 +400,7 @@ downloadpkg() {
 	;;
     esac
     mv "$destfile" "$SRC" || cleanup_and_exit 1
+    rm -rf $destdir
 }
 
 getcachedir() {
