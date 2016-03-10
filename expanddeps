@@ -176,6 +176,11 @@ while(<F>) {
   if (/^F:(.*?)-\d+\/\d+\/\d+: (.*)$/) {
     my $pkgname = basename($2);
     $pkgF = $2;
+    next if $fn{$1};
+    $fn{$1} = $2;
+    my $pack = $1;
+    $pack =~ /^(.*)\.([^\.]+)$/ or die;
+    push @{$packs_arch{$2}}, $1;
     my $basename = $1;
     my $arch = $2;
     for(keys %exportfilters) {
