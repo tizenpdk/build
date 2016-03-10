@@ -201,7 +201,6 @@ while(<F>) {
   } elsif (/^O:(.*?)-\d+\/\d+\/\d+: (.*)$/) {
     $pkgO = $2;
   } elsif (/^I:(.*?)-\d+\/\d+\/\d+: (.*)$/) {
-    next if $packs_done{$1};
     my ($i, $newid) = ($1, $2);
     undef $i unless !$ids{$i} || $verscmp->($ids{$i}, $newid) < 0;
     undef $i unless defined($pkgF) && defined($pkgP);
