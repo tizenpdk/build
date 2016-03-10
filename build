@@ -776,7 +776,8 @@ while test -n "$1"; do
 	CREATE_BASELIBS=internal
 	;;
       -keep-packs)
-      KEEP_PACKS="--keep-packs"
+        KEEP_PACKS="--keep-packs"
+        ;;
       -root)
 	needarg
 	BUILD_ROOT="$ARG"
