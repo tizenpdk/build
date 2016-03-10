@@ -145,7 +145,7 @@ recipe_build_spec() {
         toshellscript $rpmbuild \
                 "${definesnstuff[@]}" \
                 "${rpmbopts[@]}" \
-                "$TOPDIR/SOURCES/$SPECFILE" \
+                "$TOPDIR/SOURCES/$RECIPEFILE" \
                 > $BUILD_ROOT/.build.command
     else
         rpmbopts[${#rpmbopts[@]}]='--short-circuit'
@@ -158,7 +158,7 @@ recipe_build_spec() {
             shellquote $rpmbuild  \
                     "${definesnstuff[@]}" \
                     "${rpmbopts[@]}" $opt \
-                    "$TOPDIR/SOURCES/$SPECFILE" \
+                    "$TOPDIR/SOURCES/$RECIPEFILE" \
                     >> $BUILD_ROOT/.build.command
             echo >>$BUILD_ROOT/.build.command
             [ "$opt" == "$BUILD_RPM_BUILD_STAGE" ] && break

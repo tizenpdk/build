@@ -51,6 +51,7 @@ TMPFILE=$BUILD_ROOT/tmpfile
 # should RPMs be installed with --force ?
 USE_FORCE=false
 PREPARE_VM=
+KEEP_PACKS=
 USEUSEDFORBUILD=
 LIST_STATE=
 RPMLIST=
@@ -65,6 +66,10 @@ while test -n "$1" ; do
 	    shift
 	    PREPARE_VM=true
 	    ;;
+       --keep-packs)
+           shift
+           KEEP_PACKS=true
+           ;;
 	--create-build-binaries)
 	    shift
 	    CREATE_BUILD_BINARIES=true
@@ -905,7 +910,7 @@ if [ -z "$KEEP_PACKS" ]; then
         PKG=${PKG##*/}
         test "$PKG" = "*" && continue
         echo "deleting $PKG"
-        rpm_e "$PKG"
+        pkg_erase
         check_exit
     done
     rm -rf "$BUILD_ROOT/.init_b_cache/todelete"
