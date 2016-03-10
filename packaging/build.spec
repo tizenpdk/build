@@ -19,6 +19,7 @@
 Name:           build
 Summary:        A Script to Build SUSE Linux RPMs
 License:        GPL-2.0+ and GPL-2.0
+Epoch:          1
 Group:          Development/Tools/Building
 Epoch:          1
 %if 0%{?suse_version} >= 1230
@@ -116,7 +117,7 @@ Group:          Development/Tools/Building
 Requires:       build
 BuildRequires:  gcc
 BuildRequires:  glibc-devel
-Provides:       tizen-build-initvm-%{initvm_arch} = 20140815
+Provides:       tizen-build-initvm-%{initvm_arch} = 20160311
 Obsoletes:      build-initvm
 %if 0%{?suse_version}
 BuildRequires:  glibc-devel-static
