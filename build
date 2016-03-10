@@ -658,6 +658,25 @@ run_rsync() {
     fi
 }
 
+hide_passwords()
+{
+    local i j
+    r=()
+    rm -f $BUILD_ROOT/.repo.config
+    for i in "${repos[@]}"; do
+        if [ "$i" == "--repo" -o "$i" == "--repository" ]; then
+            r=("${r[@]}" "$i")
+        else
+            echo $i |grep -E "^http[s]?:\/\/[^\/]*\/?" >/dev/null && echo $i >> $BUILD_ROOT/.repo.config
+            j=$(echo $i | sed -e "s#://[^@]*@#://#")
+            r=("${r[@]}" "$j")
+        fi
+    done
+    repos=("${r[@]}")
+    echo ${repos[@]}
+}
+
+
 #### main ####
 
 trap fail_exit EXIT
@@ -985,6 +1004,7 @@ if test -z "$RUNNING_IN_VM" -a -n "$VM_TYPE" -a -n "$VM_IMAGE" ; then
 fi
 
 mkdir_build_root
+hide_passwords
 
 if test "$BUILD_ROOT" = / ; then
     browner="$(stat -c %u /)"

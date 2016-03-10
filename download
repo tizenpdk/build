@@ -33,6 +33,12 @@ use File::Basename;
 
 use strict;
 
+sub hide_passwd {
+    my $url = shift;
+    $url =~ s|://[^@]*@|://|;
+    return $url
+}
+
 die "USAGE: $0 DIR URLS..." unless $#ARGV >= 1;
 
 my $dir = shift @ARGV;
@@ -42,6 +48,7 @@ my $ua = LWP::UserAgent->new(
   timeout => 42);
 
 for my $url (@ARGV) {
+  my $original = $url;
   if ($url =~ /^zypp:\/\/([^\/]*)\/?/) {
     use Build::Zypp;
     my $repo = Build::Zypp::parserepo($1);
@@ -58,7 +65,27 @@ for my $url (@ARGV) {
       last;
     }
   } else {
-    $url = URI->new($url);
+    my $found = 0;
+    if ( defined $ENV{BUILD_ROOT} && -e $ENV{BUILD_ROOT} . "/.repo.config" ) {
+        open FILE, "<", $ENV{BUILD_ROOT} . "/.repo.config" or die $!;
+        while (<FILE>) {
+            next if ($_ !~ /^http[s]?:\/\/([^\/]*)\/?/);
+            chomp($_);
+            my $hidden = URI->new($_);
+            my $ui = $hidden->userinfo;
+            $hidden->userinfo(undef);
+            if ( $url =~ m/^$hidden/ ) {
+                $url = URI->new($url);
+                $url->userinfo($ui);
+                $found = 1;
+                last;
+            }
+        }
+        close FILE;
+    }
+    if ($found == 0 ) {
+        $url = URI->new($url);
+    }
   }
   $ua->env_proxy  if $url->scheme ne 'https';
   my $dest = "$dir/".basename($url->path);
@@ -68,8 +95,8 @@ for my $url (@ARGV) {
     my $res = $ua->mirror($url, $dest);
     last if $res->is_success;
     # if it's a redirect we probably got a bad mirror and should just retry
-    die "requesting $url failed: ".$res->status_line."\n" unless $retry && $res->previous;
-    warn "retrying $url\n";
+    die "reqesting " . hide_passwd($original) . " failed: ".$res->status_line."\n" unless $retry && $res->previous;
+    warn "retrying " . hide_passwd($original) . "\n";
   }
 }
 
