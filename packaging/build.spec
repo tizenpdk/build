@@ -22,14 +22,14 @@ License:        GPL-2.0+ and GPL-2.0
 Group:          Development/Tools/Building
 Epoch:          1
 %if 0%{?suse_version} >= 1230
-Version:        20131112
+Version:        20150115
 %else
-Version:        2013.11.12
+Version:        2015.01.15
 %else
 %endif
 Release:        3.1
 #!BuildIgnore:  build-mkbaselibs
-Source:         obs-build-2013.11.12.tar.gz
+Source:         obs-build-2015.01.15.tar.gz
 
 BuildRoot:      %{_tmppath}/%{name}-%{version}-build
 # Manual requires to avoid hard require to bash-static
@@ -72,7 +72,7 @@ Requires:       build-mkbaselibs
 %if 0%{?suse_version} > 1120 || 0%{?mdkversion}
 Recommends:     build-mkdrpms
 %endif
-Provides:   tizen-build = 20140815
+Provides:   tizen-build = 20160315
 %description
 This package provides a script for building RPMs for SUSE Linux in a
 chroot environment.
@@ -116,7 +116,7 @@ Group:          Development/Tools/Building
 Requires:       build
 BuildRequires:  gcc
 BuildRequires:  glibc-devel
-Provides:       tizen-build-initvm-%{initvm_arch} = 20140815
+Provides:       tizen-build-initvm-%{initvm_arch} = 20160315
 Obsoletes:      build-initvm
 %if 0%{?suse_version}
 BuildRequires:  glibc-devel-static
@@ -129,7 +129,7 @@ This package provides a script for building RPMs for SUSE Linux in a
 chroot or a secure virtualized
 
 %prep
-%setup -q -n obs-build-2013.11.12
+%setup -q -n obs-build-2015.01.15
 
 %build
 # initvm
