@@ -1,3 +1,10 @@
+build (2015.01.15-tizen20160315) unstable; urgency=high
+
+  * just update version to 2015.01.15 
+
+ -- Jiankang Fan <jiankang.fan@samsung.com>  Tue, 15 Mar 2016 19:30:22 +0200
+
+
 build (2013.11.12-tizen20140815) unstable; urgency=high
 
   * update to version 2013.11.12
