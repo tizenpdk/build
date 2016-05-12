@@ -136,7 +136,7 @@ chroot or a secure virtualized
 make CFLAGS="$RPM_BUILD_FLAGS" initvm-all
 
 %if 0%{?fedora} == 23
-cp -f find-debuginfo.sh /usr/lib/rpm/find-debuginfo.sh
+%global debug_package %{nil}
 %endif
 
 %install
