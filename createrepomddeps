@@ -33,6 +33,7 @@ use Build::Rpmmd;
 use Digest::MD5 ();
 use File::Path qw(mkpath rmtree);
 use File::Basename;
+use Fcntl ':flock';
 
 Getopt::Long::Configure("no_ignore_case");
 
@@ -90,8 +91,8 @@ for my $url (@ARGV) {
     my $lock_file = $dir . 'repodata/down_repomd.lock';
     open(my $lfh, '>>', $lock_file) or die "Could not open '$lock_file' - $!";
     flock($lfh, LOCK_EX);
-    if (!-f $dest . '/repomd.xml') {
-      if (system($INC[0].'/download', $dest, $url . "repodata/repomd.xml")) {
+    if (!-f "${dir}repodata/repomd.xml") {
+      if (system($INC[0].'/download', "${dir}repodata", "${baseurl}repodata/repomd.xml")) {
         close($lfh) or die "Could not write '$lock_file' - $!";
         die("get metadata failed\n");
       }
