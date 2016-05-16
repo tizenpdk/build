@@ -87,7 +87,16 @@ for my $url (@ARGV) {
     $dir = "$cachedir/$repoid/";
     $baseurl .= '/' unless $baseurl =~ /\/$/;
     mkpath("${dir}repodata");
-    system($INC[0].'/download', "${dir}repodata", "${baseurl}repodata/repomd.xml");
+    my $lock_file = $dir . 'repodata/down_repomd.lock';
+    open(my $lfh, '>>', $lock_file) or die "Could not open '$lock_file' - $!";
+    flock($lfh, LOCK_EX);
+    if (!-f $dest . '/repomd.xml') {
+      if (system($INC[0].'/download', $dest, $url . "repodata/repomd.xml")) {
+        close($lfh) or die "Could not write '$lock_file' - $!";
+        die("get metadata failed\n");
+      }
+    }
+    close($lfh) or die "Could not write '$lock_file' - $!";
   } else {
     $dir = $url;
   }
@@ -111,6 +120,9 @@ for my $url (@ARGV) {
       utf8::downgrade($u);
     }
     my $cached;
+    my $lock_file = $dir . "repodata/down_primary.lock";
+    open(my $lfh, '>>', $lock_file) or die "Could not open '$lock_file' - $!";
+    flock($lfh, LOCK_EX);
     if (-e $u) {
       $cached = 1;
       $cached = 0 if exists($f->{'size'}) && $f->{'size'} != (-s _);
@@ -126,6 +138,8 @@ for my $url (@ARGV) {
 	die("inconsistent repodata in $url\n");
       }
     }
+    close($lfh) or die "Could not write '$lock_file' - $!";
+
     my $fh;
     open($fh, '<', $u) or die "Error opening $u: $!\n";
     if ($u =~ /\.gz$/) {
