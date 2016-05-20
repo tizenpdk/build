@@ -10,7 +10,7 @@ Architecture: amd64 i386
 Depends: ${perl:Depends},
   rpm,
   libxml-parser-perl,
-  libcrypt-ssleay-perl (= 0.64-tizen20130308),
+  libcrypt-ssleay-perl (>= 0.64-tizen20130308),
   binfmt-support,
   tizen-qemu-arm-static-2013.12.12
 Recommends: rpm2cpio
