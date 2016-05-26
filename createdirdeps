@@ -85,7 +85,7 @@ for my $dir (@ARGV) {
 	}
       }
     }
-    my $q = Build::query($path, 'addselfprovides' => 1, 'conflicts' => 1, 'evra' => 1, 'buildtime' => 1);
+    my $q = Build::query($path, 'addselfprovides' => 1, 'conflicts' => 1, 'evra' => 1, 'buildtime' => 1, 'alldeps' => 1);
     next unless $q && defined($q->{'name'}) && defined($q->{'arch'}) && defined($q->{'version'});
     my $idx = "$q->{'name'}.$q->{'arch'}-$id";
     next if $seen{$idx};

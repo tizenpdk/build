@@ -169,7 +169,7 @@ sub primary_handle_dep {
   return if $dep =~ /^rpmlib\(/;
   if(exists $attr{'flags'}) {
     my $evr = $attr{'ver'};
-    return unless defined($evr) && exists($flagmap{$attr{'flags'}});
+    #return unless defined($evr) && exists($flagmap{$attr{'flags'}});
     $evr = "$attr{'epoch'}:$evr" if $attr{'epoch'};
     $evr .= "-$attr{'rel'}" if defined $attr{'rel'};
     $dep .= " $flagmap{$attr{'flags'}} $evr";
