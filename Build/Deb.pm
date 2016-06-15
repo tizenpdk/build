@@ -1,3 +1,23 @@
+################################################################
+#
+# Copyright (c) 1995-2014 SUSE Linux Products GmbH
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 or 3 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program (see the file COPYING); if not, write to the
+# Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA
+#
+################################################################
+
 package Build::Deb;
 
 use strict;
@@ -8,6 +28,31 @@ eval {
   require Compress::Zlib;
   $have_zlib = 1;
 };
+
+my %obs2debian = (
+  "i486"    => "i386",
+  "i586"    => "i386",
+  "i686"    => "i386",
+  "ppc"     => "powerpc",
+  "ppc64le" => "ppc64el",
+  "x86_64"  => "amd64",
+  "armv4l"  => "armel",
+  "armv5l"  => "armel",
+  "armv6l"  => "armel",
+  "armv7l"  => "armel",
+  "armv7hl" => "armhf"
+);
+
+sub basearch {
+  my ($arch) = @_;
+  return 'all' if !defined($arch) || $arch eq 'noarch';
+  return $obs2debian{$arch} || $arch;
+}
+
+sub obsarch {
+  my ($arch) = @_;
+  return grep {$obs2debian{$_} eq $arch} sort keys %obs2debian;
+}
 
 sub parse {
   my ($bconf, $fn) = @_;
@@ -22,12 +67,7 @@ sub parse {
   }
   # map to debian names
   $os = 'linux' if !defined($os);
-  $arch = 'all' if !defined($arch) || $arch eq 'noarch';
-  $arch = 'i386' if $arch =~ /^i[456]86$/;
-  $arch = 'powerpc' if $arch eq 'ppc';
-  $arch = 'amd64' if $arch eq 'x86_64';
-  $arch = 'armel' if $arch =~ /^armv[4567]l$/;
-  $arch = 'armhf' if $arch eq 'armv7hl';
+  $arch = basearch($arch);
 
   if (ref($fn) eq 'ARRAY') {
     @control = @$fn;
@@ -45,6 +85,7 @@ sub parse {
   my $name;
   my $version;
   my @deps;
+  my @exclarch;
   while (@control) {
     my $c = shift @control;
     last if $c eq '';   # new paragraph
@@ -59,10 +100,18 @@ sub parse {
     if ($tag eq 'VERSION') {
       $version = $data;
       $version =~ s/-[^-]+$//;
+    } elsif ($tag eq 'ARCHITECTURE') {
+      my @archs = split('\s+', $data);
+      map { s/$os-//; s/any-// } @archs;
+      next if grep { $_ eq "any" || $_ eq "all" } @archs;
+      @exclarch = map { obsarch($_) } @archs;
+      # unify
+      my %exclarch = map {$_ => 1} @exclarch;
+      @exclarch = sort keys %exclarch;
     } elsif ($tag eq 'SOURCE') {
       $name = $data;
     } elsif ($tag eq 'BUILD-DEPENDS' || $tag eq 'BUILD-CONFLICTS' || $tag eq 'BUILD-IGNORE' || $tag eq 'BUILD-DEPENDS-INDEP') {
-      my @d = split(/,\s*/, $data);
+      my @d = split(/\s*,\s*/, $data);
       for my $d (@d) {
         my @alts = split('\s*\|\s*', $d);
         my @needed;
@@ -75,11 +124,11 @@ sub parse {
               $isneg = 1 if $q =~ s/^\!//;
               $bad = 1 if !defined($bad) && !$isneg;
               if ($isneg) {
-                if ($q eq $arch || $q eq 'any' || $q eq "$os-$arch" || $q eq "$os-any") {
+                if ($q eq $arch || $q eq 'any' || $q eq "$os-$arch" || $q eq "$os-any" || $q eq "any-$arch") {
                   $bad = 1;
                   last;
                 }
-              } elsif ($q eq $arch || $q eq 'any' || $q eq "$os-$arch" || $q eq "$os-any") {
+              } elsif ($q eq $arch || $q eq 'any' || $q eq "$os-$arch" || $q eq "$os-any" || $q eq "any-$arch") {
                 $bad = 0;
               }
             }
@@ -104,6 +153,7 @@ sub parse {
   $ret->{'name'} = $name;
   $ret->{'version'} = $version;
   $ret->{'deps'} = \@deps;
+  $ret->{'exclarch'} = \@exclarch if @exclarch;
   return $ret;
 }
 
@@ -125,6 +175,26 @@ sub ungzip {
   1 while sysread(TMP2, $data, 1024, length($data)) > 0;
   close(TMP2) || die("gunzip error");
   return $data;
+}
+
+sub control2res {
+  my ($control) = @_;
+  my %res;
+  my @control = split("\n", $control);
+  while (@control) {
+    my $c = shift @control;
+    last if $c eq '';   # new paragraph
+    my ($tag, $data) = split(':', $c, 2);
+    next unless defined $data;
+    $tag = uc($tag);
+    while (@control && $control[0] =~ /^\s/) {
+      $data .= "\n".substr(shift @control, 1);
+    }
+    $data =~ s/^\s+//s;
+    $data =~ s/\s+$//s;
+    $res{$tag} = $data;
+  }
+  return %res;
 }
 
 sub debq {
@@ -202,21 +272,7 @@ sub debq {
     }
     $data = substr($data, $blen);
   }
-  my %res;
-  my @control = split("\n", $control);
-  while (@control) {
-    my $c = shift @control;
-    last if $c eq '';   # new paragraph
-    my ($tag, $data) = split(':', $c, 2);
-    next unless defined $data;
-    $tag = uc($tag);
-    while (@control && $control[0] =~ /^\s/) {
-      $data .= "\n".substr(shift @control, 1);
-    }
-    $data =~ s/^\s+//s;
-    $data =~ s/\s+$//s;
-    $res{$tag} = $data;
-  }
+  my %res = control2res($control);
   $res{'CONTROL_MD5'} = $controlmd5;
   return %res;
 }
@@ -233,22 +289,27 @@ sub query {
     $src =~ s/\s.*$//;
   }
   my @provides = split(',\s*', $res{'PROVIDES'} || '');
-  push @provides, "$name = $res{'VERSION'}";
+  if ($opts{'addselfprovides'}) {
+    push @provides, "$name (= $res{'VERSION'})";
+  }
   my @depends = split(',\s*', $res{'DEPENDS'} || '');
-  my @predepends = split(',\s*', $res{'PRE-DEPENDS'} || '');
-  push @depends, @predepends;
-  s/ \(([^\)]*)\)/ $1/g for @provides;
-  s/ \(([^\)]*)\)/ $1/g for @depends;
-  s/>>/>/g for @provides;
-  s/<</</g for @provides;
-  s/>>/>/g for @depends;
-  s/<</</g for @depends;
+  push @depends, split(',\s*', $res{'PRE-DEPENDS'} || '');
   my $data = {
     name => $name,
     hdrmd5 => $res{'CONTROL_MD5'},
     provides => \@provides,
     requires => \@depends,
   };
+  if ($opts{'conflicts'}) {
+    my @conflicts = split(',\s*', $res{'CONFLICTS'} || '');
+    push @conflicts, split(',\s*', $res{'BREAKS'} || '');
+    $data->{'conflicts'} = \@conflicts if @conflicts;
+  }
+  if ($opts{'weakdeps'}) {
+    for my $dep ('SUGGESTS', 'RECOMMENDS', 'ENHANCES') {
+      $data->{lc($dep)} = [ split(',\s*', $res{$dep} || '') ] if defined $res{$dep};
+    }
+  }
   $data->{'source'} = $src if $src ne '';
   if ($opts{'evra'}) {
     $res{'VERSION'} =~ /^(?:(\d+):)?(.*?)(?:-([^-]*))?$/s;
@@ -259,6 +320,16 @@ sub query {
   }
   if ($opts{'description'}) {
     $data->{'description'} = $res{'DESCRIPTION'};
+  }
+  if ($opts{'normalizedeps'}) {
+    for my $dep (qw{provides requires conflicts suggests enhances recommends}) {
+      next unless $data->{$dep};
+      for (@{$data->{$dep}}) {
+        s/ \(([^\)]*)\)/ $1/g;
+        s/<</</g;
+        s/>>/>/g;
+      }
+    }
   }
   return $data;
 }
@@ -338,6 +409,36 @@ sub verscmp {
   $r1 = '' unless defined $r1;
   $r2 = '' unless defined $r2;
   return verscmp_part($r1, $r2);
+}
+
+sub queryinstalled {
+  my ($root, %opts) = @_;
+
+  $root = '' if !defined($root) || $root eq '/';
+  my @pkgs;
+  local *F;
+  if (open(F, '<', "$root/var/lib/dpkg/status")) {
+    my $ctrl = '';
+    while(<F>) {
+      if ($_ eq "\n") {
+	my %res = control2res($ctrl);
+	if (defined($res{'PACKAGE'})) {
+	  my $data = {'name' => $res{'PACKAGE'}};
+	  $res{'VERSION'} =~ /^(?:(\d+):)?(.*?)(?:-([^-]*))?$/s;
+	  $data->{'epoch'} = $1 if defined $1;
+	  $data->{'version'} = $2;
+	  $data->{'release'} = $3 if defined $3;
+	  $data->{'arch'} = $res{'ARCHITECTURE'};
+	  push @pkgs, $data;
+	}
+        $ctrl = '';
+	next;
+      }
+      $ctrl .= $_;
+    }
+    close F;
+  }
+  return \@pkgs;
 }
 
 1;

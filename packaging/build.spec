@@ -19,12 +19,13 @@
 Name:           build
 Summary:        A Script to Build SUSE Linux RPMs
 License:        GPL-2.0+ and GPL-2.0
+Epoch:          1
 Group:          Development/Tools/Building
 Epoch:          1
 %if 0%{?suse_version} >= 1230
-Version:        20150115
+Version:        20150115 
 %else
-Version:        2015.01.15
+Version:        20150115
 %else
 %endif
 Release:        3.1
@@ -72,7 +73,7 @@ Requires:       build-mkbaselibs
 %if 0%{?suse_version} > 1120 || 0%{?mdkversion}
 Recommends:     build-mkdrpms
 %endif
-Provides:   tizen-build = 20160315
+Provides:   tizen-build = 20160311
 %description
 This package provides a script for building RPMs for SUSE Linux in a
 chroot environment.
@@ -116,7 +117,7 @@ Group:          Development/Tools/Building
 Requires:       build
 BuildRequires:  gcc
 BuildRequires:  glibc-devel
-Provides:       tizen-build-initvm-%{initvm_arch} = 20160315
+Provides:       tizen-build-initvm-%{initvm_arch} = 20160311
 Obsoletes:      build-initvm
 %if 0%{?suse_version}
 BuildRequires:  glibc-devel-static
@@ -134,6 +135,7 @@ chroot or a secure virtualized
 %build
 # initvm
 make CFLAGS="$RPM_BUILD_FLAGS" initvm-all
+
 %if 0%{?fedora} == 23
 cp -f find-debuginfo.sh /usr/lib/rpm/find-debuginfo.sh
 %endif
@@ -167,6 +169,8 @@ test -e default.conf
 /usr/lib/build
 %config(noreplace) /usr/lib/build/emulator/emulator.sh
 %{_mandir}/man1/build.1*
+%{_mandir}/man1/unrpm.1*
+%{_mandir}/man1/vc.1*
 %exclude /usr/lib/build/initvm.*
 
 %if 0%{?suse_version} > 1120 || ! 0%{?suse_version}
@@ -191,6 +195,8 @@ test -e default.conf
 /usr/lib/build/initvm.*
 
 %changelog
+* Mon Feb 29 2016 jiankang.fan@samsung.com
+- update to version 2015.11.12
 * Tue Sep 11 2012 qiang.z.zhang@intel.com
 - update to version 2012.09.11
 * Sat Aug 11 2012 qiang.z.zhang@intel.com
