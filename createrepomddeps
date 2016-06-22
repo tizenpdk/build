@@ -12,6 +12,8 @@ use Build::Rpm;
 use Digest::MD5 qw(md5 md5_hex md5_base64);
 use File::Path qw(mkpath rmtree);
 use File::Basename;
+use IPC::SysV qw(IPC_PRIVATE S_IRUSR S_IWUSR IPC_CREAT IPC_EXCL SEM_UNDO);
+use IPC::Semaphore;
 use LWP::UserAgent;
 use URI;
 Getopt::Long::Configure("no_ignore_case");
@@ -376,7 +378,19 @@ sub getmetadata
 
   my $dest = $dir . "repodata";
   mkpath($dest);
-  system($INC[0].'/download', $dest, $url . "repodata/repomd.xml");
+  my $sem;
+  my $key = IPC::SysV::ftok($dir, '1');
+  if ($sem = IPC::Semaphore->new($key, 1, S_IRUSR | S_IWUSR | IPC_CREAT | IPC_EXCL)) {
+    $sem->setval(0, 1);
+  } else {
+    $sem = IPC::Semaphore->new($key, 1, S_IRUSR | S_IWUSR | IPC_CREAT);
+  }
+  $sem->op(0, -1, SEM_UNDO);
+  if (!-f "${dir}repodata/repomd.xml") {
+    system($INC[0].'/download', $dest, $url . "repodata/repomd.xml");
+  }
+  $sem->op(0, 1, SEM_UNDO);
+  $sem->remove();
 }
 
 ### main
@@ -446,6 +460,14 @@ for my $url (@ARGV) {
 	utf8::downgrade($u);
     }
     my $cached;
+    my $sem;
+    my $key = IPC::SysV::ftok("${dir}repodata/", '1');
+    if ($sem = IPC::Semaphore->new($key, 1, S_IRUSR | S_IWUSR | IPC_CREAT | IPC_EXCL)) {
+      $sem->setval(0, 1);
+    } else {
+      $sem = IPC::Semaphore->new($key, 1, S_IRUSR | S_IWUSR | IPC_CREAT);
+    }
+    $sem->op(0, -1, SEM_UNDO);
     if (-e $u) {
       $cached = 1;
       $cached = 0 if exists($f->{'size'}) && $f->{'size'} != (-s _);
@@ -456,6 +478,8 @@ for my $url (@ARGV) {
 	  die("download failed\n");
 	}
     }
+    $sem->op(0, 1, SEM_UNDO);
+    $sem->remove();
     my $fh;
     open($fh, '<', $u) or die "Error opening $u: $!\n";
     if ($u =~ /\.gz$/) {
