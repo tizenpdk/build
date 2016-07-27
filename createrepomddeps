@@ -1,495 +1,179 @@
 #!/usr/bin/perl -w
 
+################################################################
+#
+# Copyright (c) 1995-2014 SUSE Linux Products GmbH
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 or 3 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program (see the file COPYING); if not, write to the
+# Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA
+#
+################################################################
+
 BEGIN {
   unshift @INC, ($::ENV{'BUILD_DIR'} || '/usr/lib/build');
 }
 
 use strict;
-use XML::Parser;
 use Data::Dumper;
 use Getopt::Long;
+use Build ':rpm';
 use Build::Rpm;
-use Digest::MD5 qw(md5 md5_hex md5_base64);
+use Build::Rpmmd;
+use Digest::MD5 ();
 use File::Path qw(mkpath rmtree);
 use File::Basename;
-use LWP::UserAgent;
-use URI;
+use IPC::SysV qw(IPC_PRIVATE S_IRUSR S_IWUSR IPC_CREAT IPC_EXCL SEM_UNDO);
+use IPC::Semaphore;
+
 Getopt::Long::Configure("no_ignore_case");
-
-my @parent = [];
-my @primaryfiles = ();
-my @packages = ();
-
-my $baseurl; # current url
 
 my $opt_dump;
 my $opt_old;
 my $opt_nosrc;
 my $opt_bc;
+my $opt_zypp;
 my $cachedir = "/var/cache/build";
 
-my $old_seen = ();
+sub printold {
+  my ($pkg, $baseurl, $old_seen) = @_;
 
-my $repomdparser = {
-  repomd => {
-    data => {
-      _start => \&repomd_handle_data_start,
-      _end => \&repomd_handle_data_end,
-      location => {
-	_start => \&repomd_handle_location,
-      },
-      size => {
-	_text => \&repomd_handle_size,
-      },
-    },
-  },
-};
-
-my $primaryparser = {
-  metadata => {
-    'package' => {
-      _start => \&primary_handle_package_start,
-      _end => \&primary_handle_package_end,
-      name => { _text => \&primary_collect_text, _end => \&primary_store_text },
-      arch => { _text => \&primary_collect_text, _end => \&primary_store_text },
-      version => { _start => \&primary_handle_version },
-      'time' => { _start => \&primary_handle_time },
-      format => {
-	'rpm:provides' => { 'rpm:entry' => { _start => \&primary_handle_package_provides }, },
-	'rpm:requires' => { 'rpm:entry' => { _start => \&primary_handle_package_requires }, },
-	'rpm:conflicts' => { 'rpm:entry' => { _start => \&primary_handle_package_conflicts }, },
-	'rpm:obsoletes' => { 'rpm:entry' => { _start => \&primary_handle_package_obsoletes }, },
-	'rpm:buildhost' => { _text => \&primary_collect_text, _end => \&primary_store_text },
-	'rpm:sourcerpm' => { _text => \&primary_collect_text, _end => \&primary_store_text },
-### currently commented out, as we ignore file provides in createrpmdeps
-#	file => {
-#	  _start => \&primary_handle_file_start,
-#	  _text => \&primary_collect_text,
-#	  _end => \&primary_handle_file_end
-#	},
-      },
-      location => { _start => \&primary_handle_package_location },
-    },
-  },
-};
-
-# [ [tag, \%], ... ]
-my @cursor = ();
-
-my %datafile;
-sub repomd_handle_data_start
-{
-  my $p = shift;
-  my $el = shift;
-
-  my $attr = map_attrs(@_);
-  %datafile = ();
-  if($attr->{'type'} ne 'primary') {
-    pop @cursor;
-  }
-}
-
-sub repomd_handle_data_end
-{
-  my $p = shift;
-  my $el = shift;
-  push @primaryfiles, { %datafile } if exists $datafile{'location'};
-}
-
-
-sub repomd_handle_location
-{
-  my $p = shift;
-  my $el = shift;
-
-  my $attr = map_attrs(@_);
-  $datafile{'location'} = $attr->{'href'} if defined $attr->{'href'};
-}
-
-sub repomd_handle_size
-{
-  my $p = shift;
-  my $el = shift;
-  $datafile{'size'} = $el;
-}
-
-
-sub generic_handle_start
-{
-  my $p = shift;
-  my $el = shift;
-
-  if(exists $cursor[-1]->[1]->{$el})
-  {
-    my $h = $cursor[-1]->[1]->{$el};
-    push @cursor, [$el, $h];
-    if(exists $h->{'_start'}) {
-      &{$h->{'_start'}}($p, $el, @_);
-    }
-  }
-}
-
-sub generic_handle_char
-{
-  my $p = shift;
-  my $text = shift;
-
-  my $h = $cursor[-1]->[1];
-
-  if(exists $h->{'_text'}) {
-    &{$h->{'_text'}}($p, $text);
-  }
-}
-
-sub generic_handle_end
-{
-  my $p = shift;
-  my $el = shift;
-
-  if(!defined $cursor[-1]->[0] || $cursor[-1]->[0] eq $el)
-  {
-    my $h = $cursor[-1]->[1];
-
-    if(exists $h->{'_end'}) {
-      &{$h->{'_end'}}($p, $el);
-    }
-
-    pop @cursor;
-  }
-}
-
-sub map_attrs
-{
-  my %h;
-  while(@_) {
-    my $k = shift;
-    $h{$k} = shift;
-  }
-
-  return \%h;
-}
-
-# expat does not guarantee that character data doesn't get split up
-# between multiple calls
-my $textbuf = '';
-sub primary_collect_text
-{
-  my $p = shift;
-  my $text = shift;
-
-  $textbuf .= $text;
-}
-
-sub primary_store_text
-{
-    my $p = shift;
-    my $el = shift;
-
-    $packages[-1]->{$cursor[-1]->[0]} = $textbuf;
-    $textbuf = '';
-}
-
-sub primary_handle_package_start
-{
-  my $p = shift;
-  my $el = shift;
-
-  my $attr = map_attrs(@_);
-
-  push @packages, { type => $attr->{'type'}, baseurl => $baseurl };
-}
-
-sub primary_handle_package_end
-{
-  my $p = shift;
-  my $el = shift;
-
-  if($opt_bc) {
-      printasbuildcachefile(@packages);
-      shift @packages;
-  } elsif ($opt_old) {
-      foreach my $pkg (@packages) {
-    my $arch = $pkg->{'arch'};
-    $arch = 'src' if $pkg->{'arch'} eq 'nosrc';
-    next if ($arch eq 'src' && $opt_nosrc);
-    if(exists($old_seen->{$pkg->{'name'}}->{$arch})) {
-	my $pv = $old_seen->{$pkg->{'name'}}->{$arch}->{'ver'};
-	my $rv = $pkg->{'ver'}.'-'.$pkg->{'rel'};
-	my $vv = Build::Rpm::verscmp($pv, $rv, 0);
-	if($vv < 0)
-	{
-      print $old_seen->{$pkg->{'name'}}->{$arch}->{'loc'}."\n";
-      $old_seen->{$pkg->{'name'}}->{$arch}->{'ver'} = $pkg->{'ver'}.'-'.$pkg->{'rel'};
-      $old_seen->{$pkg->{'name'}}->{$arch}->{'loc'} = $pkg->{'baseurl'} . $pkg->{'location'};
-	} else {
-      print $pkg->{'baseurl'} . $pkg->{'location'}."\n";
-	}
-    } else {
-	$old_seen->{$pkg->{'name'}}->{$arch}->{'ver'} = $pkg->{'ver'}.'-'.$pkg->{'rel'};
-	$old_seen->{$pkg->{'name'}}->{$arch}->{'loc'} = $pkg->{'baseurl'} . $pkg->{'location'};
-    }
-      }
-      shift @packages;
-  }
-}
-
-sub primary_handle_version
-{
-  my $p = shift;
-  my $el = shift;
-
-  my $attr = map_attrs(@_);
-  $packages[-1]->{'ver'} = $attr->{'ver'};
-  $packages[-1]->{'rel'} = $attr->{'rel'};
-}
-
-sub primary_handle_time
-{
-  my $p = shift;
-  my $el = shift;
-
-  my $attr = map_attrs(@_);
-  $packages[-1]->{'filetime'} = $attr->{'file'};
-  $packages[-1]->{'buildtime'} = $attr->{'build'};
-}
-
-sub primary_handle_package_location
-{
-  my $p = shift;
-  my $el = shift;
-
-  my $attr = map_attrs(@_);
-  $packages[-1]->{'location'} = $attr->{'href'};
-}
-
-sub primary_handle_file_start
-{
-  my $p = shift;
-  my $el = shift;
-
-  my $attr = map_attrs(@_);
-  if(exists $attr->{'type'}) {
-    pop @cursor;
-  }
-}
-
-sub primary_handle_file_end
-{
-  my $p = shift;
-  my $text = shift;
-
-  primary_handle_package_deps('provides', 'name', $textbuf);
-  $textbuf = '';
-}
-
-my %flagmap = (
-  EQ => '=',
-  LE => '<=',
-  GE => '>=',
-  GT => '>',
-  LT => '<',
-  NE => '!=',
-);
-
-sub primary_handle_package_deps
-{
-  my $dep = shift;
-  my $attr = map_attrs(@_);
-
-  if(exists $attr->{'flags'}) {
-    if(!exists($flagmap{$attr->{'flags'}})) {
-      print STDERR "bogus relation: ", $attr->{'flags'}, "\n";
+  my $arch = $pkg->{'arch'};
+  $arch = 'src' if $pkg->{'arch'} eq 'nosrc';
+  return if $arch eq 'src' && $opt_nosrc;
+  my $evr = $pkg->{'version'}.'-'.$pkg->{'release'};
+  $evr = "$pkg->{'epoch'}:$evr" if $pkg->{'epoch'};
+  my $loc = $baseurl . $pkg->{'location'};
+  if ($old_seen->{$pkg->{'name'}}->{$arch}) {
+    my $vv = Build::Rpm::verscmp($old_seen->{$pkg->{'name'}}->{$arch}->{'evr'}, $evr, 0);
+    if ($vv >= 0) {
+      print "$loc\n";
       return;
     }
-    $attr->{'flags'} = $flagmap{$attr->{'flags'}};
+    print $old_seen->{$pkg->{'name'}}->{$arch}->{'loc'}."\n";
   }
-  return if($attr->{'name'} =~ /^rpmlib\(/);
-  push @{$packages[-1]->{$dep}}, $attr;
-
+  $old_seen->{$pkg->{'name'}}->{$arch}->{'evr'} = $evr;
+  $old_seen->{$pkg->{'name'}}->{$arch}->{'loc'} = $loc;
 }
-
-sub primary_handle_package_conflicts
-{
-  shift;shift; primary_handle_package_deps('conflicts', @_);
-}
-
-sub primary_handle_package_obsoletes
-{
-  shift;shift; primary_handle_package_deps('obsoletes', @_);
-}
-
-sub primary_handle_package_requires
-{
-  shift;shift; primary_handle_package_deps('requires', @_);
-}
-sub primary_handle_package_provides
-{
-  shift;shift; primary_handle_package_deps('provides', @_);
-}
-
-sub deps2string
-{
-  return join(' ', map {
-	my $s = $_->{'name'};
-	if(exists $_->{'flags'}) {
-	  $s .= ' '.$_->{'flags'}.' ';
-	  $s .= $_->{'epoch'}.':' if(exists $_->{'epoch'} && $_->{'epoch'} != 0);
-	  $s .= $_->{'ver'};
-	  $s .= '-'.$_->{'rel'} if exists $_->{'rel'};
-	}
-	$s
-      } @_);
-}
-
-sub printasbuildcachefile(@)
-{
-  foreach my $pkg (@_) {
-    next if $pkg->{'arch'} eq 'src' || $pkg->{'arch'} eq 'nosrc';
-    my $id = sprintf("%s.%s-%d/%d/%d: ",
-      $pkg->{'name'},
-      $pkg->{'arch'},
-      $pkg->{'buildtime'},
-      $pkg->{'filetime'},
-      0);
-    print "F:".$id. $pkg->{'baseurl'} . $pkg->{'location'} . "\n";
-
-    my $deps = deps2string(@{$pkg->{'provides'}});
-    print "P:$id$deps\n";
-
-    $deps = deps2string(@{$pkg->{'requires'}});
-    print "R:$id$deps\n";
-
-    my $tag = sprintf("%s-%s-%s %s",
-      $pkg->{'name'},
-      $pkg->{'ver'},
-      $pkg->{'rel'},
-#      $pkg->{'rpm:buildhost'},
-      $pkg->{'buildtime'});
-    print "I:$id$tag\n";
-  }
-}
-
-sub getmetadata
-{
-  my $url = $_[0];
-  my $dir = $_[1];
-
-  my $dest = $dir . "repodata";
-  mkpath($dest);
-  system($INC[0].'/download', $dest, $url . "repodata/repomd.xml");
-}
-
-### main
 
 GetOptions (
-    "nosrc"   => \$opt_nosrc,
-    "dump"   => \$opt_dump,
-    "old"   => \$opt_old,
-    "cachedir=s"  => \$cachedir,
-    ) or exit(1);
+  "nosrc"   => \$opt_nosrc,
+  "dump"   => \$opt_dump,
+  "old"   => \$opt_old,
+  "zypp=s"   => \$opt_zypp,
+  "cachedir=s"  => \$cachedir,
+  ) or exit(1);
 
-$opt_bc = 1 unless ($opt_dump || $opt_old);
+$opt_bc = 1 unless $opt_dump || $opt_old;
 
-my $p = new XML::Parser(
-  Handlers => {
-    Start => \&generic_handle_start,
-    End => \&generic_handle_end,
-    Char => \&generic_handle_char
-  });
+my $old_seen = {};	# for opt_old
+my @packages;		# for opt_dump
 
-#my $url = '/mounts/mirror/SuSE/ftp.suse.com/pub/suse/update/10.1/';
 for my $url (@ARGV) {
   my $dir;
-  if ($url =~ /^zypp:\/\/([^\/]*)\/?/) {
-    use Build::Zypp;
-    my $repo = Build::Zypp::parsecfg($1);
-    die "can't parse $1\n" unless $repo;
-    my $type = $repo->{'type'};
-    if($type eq 'rpm-md') {
-      my $name = $repo->{'name'};
-      $dir = "/var/cache/zypp/raw/$name/";
-      $baseurl = $url;
-      $baseurl .= '/' unless $baseurl =~ /\/$/;
-    } elsif ($type eq 'yast2') {
-      # XXX
-      exec ($INC[0].'/createyastdeps', $url);
-    } else {
-      die "unsupported repo type: $type\n";
-    }
-  } elsif ($url =~ /^http[s]?:\/\/([^\/]*)\/?/) {
-    my $repoid = md5_hex($url);
+  my $baseurl = $url;
+  if ($opt_zypp) {
+    $dir = $opt_zypp;
+  } elsif ($url =~ /^(?:ftps?|https?):\/\/([^\/]*)\/?/) {
+    my $repoid = Digest::MD5::md5_hex($url);
     $dir = "$cachedir/$repoid/";
-    $baseurl = $url;
     $baseurl .= '/' unless $baseurl =~ /\/$/;
-    getmetadata($baseurl, $dir);
-  } elsif ($url =~ /^arch\@/) {
-    exec ("$INC[0]/createarchdeps", "--cachedir=$cachedir", substr($url, 5));
+    mkpath("${dir}repodata");
+    my $sem;
+    my $key = IPC::SysV::ftok($dir, '1');
+    if ($sem = IPC::Semaphore->new($key, 1, S_IRUSR | S_IWUSR | IPC_CREAT | IPC_EXCL)) {
+      $sem->setval(0, 1);
+    } else {
+      $sem = IPC::Semaphore->new($key, 1, S_IRUSR | S_IWUSR | IPC_CREAT);
+    }
+
+    $sem->op(0, -1, SEM_UNDO);
+    if (!-f "${dir}repodata/repomd.xml") {
+      system($INC[0].'/download', "${dir}repodata", "${baseurl}repodata/repomd.xml");
+    }
+    $sem->op(0, 1, SEM_UNDO);
+    $sem->remove();
   } else {
     $dir = $url;
-    $dir .= '/' unless $dir =~ /\/$/;
-    $baseurl = $dir;
+  }
+  $dir .= '/' unless $dir =~ /\/$/;
+  $baseurl .= '/' unless $baseurl =~ /\/$/;
+
+  if (! -s "${dir}repodata/repomd.xml") {
+    die("zypp repo $url is not up to date, please refresh first\n") if $opt_zypp;
+    die("repo $url does not contain a repomd.xml file\n");
   }
 
-  @primaryfiles = ();
-  @cursor = ([undef, $repomdparser]);
-
-  $p->parsefile($dir . 'repodata/repomd.xml');
-
+  my @primaryfiles;
+  Build::Rpmmd::parse_repomd("${dir}repodata/repomd.xml", \@primaryfiles);
+  @primaryfiles = grep {$_->{'type'} eq 'primary' && defined($_->{'location'})} @primaryfiles;
 #  print Dumper(\@primaryfiles);
 
-  foreach my $f (@primaryfiles) {
-    @cursor = ([undef, $primaryparser]);
-
-    my $u = $dir . $f->{'location'};
+  for my $f (@primaryfiles) {
+    my $u = "$dir$f->{'location'}";
     if ($] > 5.007) {
-	require Encode;
-	utf8::downgrade($u);
+      require Encode;
+      utf8::downgrade($u);
     }
     my $cached;
+    my $sem;
+    my $key = IPC::SysV::ftok("${dir}repodata/", '1');
+    if ($sem = IPC::Semaphore->new($key, 1, S_IRUSR | S_IWUSR | IPC_CREAT | IPC_EXCL)) {
+      $sem->setval(0, 1);
+    } else {
+      $sem = IPC::Semaphore->new($key, 1, S_IRUSR | S_IWUSR | IPC_CREAT);
+    }
+    $sem->op(0, -1, SEM_UNDO);
     if (-e $u) {
       $cached = 1;
       $cached = 0 if exists($f->{'size'}) && $f->{'size'} != (-s _);
       $cached = 0 if !exists($f->{'size'}) && $u !~ /[0-9a-f]{32}-primary/;
     }
-    if ($url =~ /^http[s]?:\/\/([^\/]*)\/?/ and !$cached) {
-        if (system($INC[0].'/download', $dir . "repodata/", $baseurl . "repodata/" . basename($u))) {
+    if (!$cached) {
+      die("zypp repo $url is not up to date, please refresh first\n") if $opt_zypp;
+      if ($url =~ /^(?:ftps?|https?):\/\/([^\/]*)\/?/) {
+	if (system("$INC[0]/download", "${dir}repodata/", "${baseurl}repodata/" . basename($u))) {
 	  die("download failed\n");
 	}
+      } else {
+	die("inconsistent repodata in $url\n");
+      }
     }
+    $sem->op(0, 1, SEM_UNDO);
+    $sem->remove();
+
     my $fh;
     open($fh, '<', $u) or die "Error opening $u: $!\n";
     if ($u =~ /\.gz$/) {
-	use IO::Uncompress::Gunzip qw($GunzipError);
-	$fh = new IO::Uncompress::Gunzip $fh or die "Error opening $u: $GunzipError\n";
+      use IO::Uncompress::Gunzip qw($GunzipError);
+      $fh = new IO::Uncompress::Gunzip $fh or die "Error opening $u: $GunzipError\n";
     }
-    $p->parse($fh);
+    Build::Rpmmd::parse($fh, sub {
+      if ($opt_dump) {
+        $_[0]->{'baseurl'} = $baseurl;
+        push @packages, $_[0] if $opt_dump;
+      }
+      if ($opt_bc) {
+	Build::writedeps(\*STDOUT, $_[0], $baseurl);
+      } elsif ($opt_old) {
+	printold($_[0], $baseurl, $old_seen);
+      }
+    }, 'addselfprovides' => 1);
     close($fh);
   }
 }
 
 if ($opt_dump) {
-    print Data::Dumper->Dump([\@packages], ['packages']); # caution: excessive memory consumption!
+  print Data::Dumper->Dump([\@packages], ['packages']); # caution: excessive memory consumption!
 }
 
-#if($rpmdepdump) {
-#    my %amap = map { $_ => 1 } @archs;
-#    my $packages = do $rpmdepdump or die $!;
-#
-#    foreach my $pkg (@$packages) {
-#        next if exists $packs{$pkg->{'name'}};
-#        next unless exists $amap{$pkg->{'arch'}};
-#        next if $pkg->{'arch'} eq 'src' || $pkg->{'arch'} eq 'nosrc';
-#        next if $pkg->{'location'} =~ /\.(?:patch|delta)\.rpm$/;
-#
-#        my $pa = $pkg->{'name'}.'.'.$pkg->{'arch'};
-#        $packs{$pkg->{'name'}} = $pa;
-#        $fn{$pa} = $pkg->{'baseurl'}.$pkg->{'location'};
-#        my $r = {};
-#        # flags and version ignored
-#        my @pr = map { $_->{'name'} } @{$pkg->{'provides'}};
-#        my @re = map { $_->{'name'} } @{$pkg->{'requires'}};
-#        $r->{'provides'} = \@pr;
-#        $r->{'requires'} = \@re;
-#        $repo{$pkg->{'name'}} = $r;
-#    }
-#}

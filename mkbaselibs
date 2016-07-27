@@ -1,5 +1,25 @@
 #!/usr/bin/perl -w
 
+################################################################
+#
+# Copyright (c) 1995-2014 SUSE Linux Products GmbH
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 or 3 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program (see the file COPYING); if not, write to the
+# Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA
+#
+################################################################
+
 use POSIX;
 use strict;
 use File::Temp qw/tempfile tempdir/;
@@ -529,8 +549,8 @@ sub handle_rpms {
   $arch = $res{'ARCH'}->[0];
   my @targets = get_targets($arch, $config);
   if (!@targets) {
-    print "no targets for arch $arch, nothing to do\n";
-    exit(0);
+    print "no targets for arch $arch, skipping $rname\n";
+    next;
   }
   for my $target (@targets) {
 
@@ -637,6 +657,7 @@ sub handle_rpms {
 	delete $alldirs{"$prefix$fn"};
       }
     }
+    delete $alldirs{$_} for keys %symlinks;
     $ad = $prefix;
     delete $alldirs{$ad};
     delete $alldirs{$ad} while $ad =~ s/\/[^\/]+$//;
@@ -965,8 +986,8 @@ sub handle_debs {
     # line and get a list of target_arch-es
     my @targets = get_targets($arch, $config);
     if (!@targets) {
-      print "no targets for arch $arch, nothing to do\n";
-      return; # there may be more debs to handle
+      print "no targets for arch $arch, skipping $d_name\n";
+      next; # there may be more debs to handle
     }
 
     for my $target (@targets) {

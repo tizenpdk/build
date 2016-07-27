@@ -1,0 +1,99 @@
+#!/usr/bin/perl -w
+
+################################################################
+#
+# Copyright (c) 1995-2014 SUSE Linux Products GmbH
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 or 3 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program (see the file COPYING); if not, write to the
+# Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA
+#
+################################################################
+
+BEGIN {
+  unshift @INC, ($::ENV{'BUILD_DIR'} || '/usr/lib/build');
+}
+
+use Build;
+use Getopt::Long;
+
+use strict;
+
+Getopt::Long::Configure("no_ignore_case");
+
+my $oldfile;
+
+GetOptions ("oldfile=s" => \$oldfile) or exit(1);
+
+sub queryfromfilename {
+  my ($fn) = @_;
+  $fn =~ s/.*\///;
+  return {'name' => $1, 'arch' => $2} if $fn =~ /^(.*)-[^-]+-[^-]+\.([^\. ]+)\.rpm$/;
+  return {'name' => $1, 'arch' => $2} if $fn =~ /^([^_]*)_(?:[^_]*)_([^_]*)\.deb$/;
+  return {'name' => $1, 'arch' => $2} if $fn =~ /^(.*)-[^-]+-[^-]+-([^-]+)\.pkg\.tar\.[gx]z$/;
+  return undef;
+}
+
+
+######################################################################
+
+my %old;
+if (defined($oldfile) && open(F, '<', $oldfile)) {
+  while (<F>) {
+    chomp;
+    $old{$1} = $_ if /^([PRCOI]:[^ ]+): /;
+  }
+  close F;
+}
+
+my %seen;
+
+for my $dir (@ARGV) {
+  my $cmd = "find $dir -follow -type f \\( -name \"*.rpm\" -o -name \"*.deb\" -o -name \"*.pkg.tar.gz\" -o -name \"*.pkg.tar.xz\" \\) -a ! -name \"*src.rpm\" -printf '\%T@/\%s/\%i \%p\\n'";
+  open(F, '-|', $cmd) or next;
+  while (<F>) {
+    chomp;
+    next unless /^([\d\.]+\/\d+\/\d+) (.*)$/;
+    my $id = $1;
+    my $path = $2;
+    # newer find version add a fraction part to %T@, strip it
+    $id =~ s/^(\d+)\.\d+/$1/;
+    next if $path =~ /\.(?:patch|delta)\.rpm$/;	# not good for building...
+    if (%old) {
+      my $q = queryfromfilename($path);
+      if ($q && defined($q->{'name'}) && defined($q->{'arch'})) {
+        my $idx = "$q->{'name'}.$q->{'arch'}-$id";
+	if ($old{"I:$idx"} && $old{"P:$idx"}) {
+	  # reuse old data
+	  next if $seen{$idx};
+	  $seen{$idx} = 1;
+	  print "F:$idx: $path\n";
+	  for (qw{P R C O I}) {
+	    print $old{"$_:$idx"}."\n" if $old{"$_:$idx"};
+	  }
+	  next;
+	}
+      }
+    }
+    my $q = Build::query($path, 'addselfprovides' => 1, 'conflicts' => 1, 'evra' => 1, 'buildtime' => 1, 'alldeps' => 1);
+    next unless $q && defined($q->{'name'}) && defined($q->{'arch'}) && defined($q->{'version'});
+    my $idx = "$q->{'name'}.$q->{'arch'}-$id";
+    next if $seen{$idx};
+    $seen{$idx} = 1;
+    $q->{'id'} = $id;
+    $q->{'location'} = $path;
+    Build::writedeps(\*STDOUT, $q);
+  }
+  close F;
+}
+

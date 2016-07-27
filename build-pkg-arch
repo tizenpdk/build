@@ -1,0 +1,73 @@
+#
+# Arch specific functions.
+#
+################################################################
+#
+# Copyright (c) 1995-2014 SUSE Linux Products GmbH
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program (see the file COPYING); if not, write to the
+# Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA
+#
+################################################################
+
+pkg_initdb_arch() {
+    mkdir -p $BUILD_ROOT/var/lib/pacman/sync
+    touch $BUILD_ROOT/var/lib/pacman/sync/core.db
+    touch $BUILD_ROOT/var/lib/pacman/sync/extra.db
+    touch $BUILD_ROOT/var/lib/pacman/sync/community.db
+}
+
+pkg_prepare_arch() {
+    :
+}
+
+pkg_erase_arch() {
+    ( cd $BUILD_ROOT && chroot $BUILD_ROOT pacman -R -n -d -d --noconfirm $PKG 2>&1 || touch $BUILD_ROOT/exit ) | \
+	perl -ne '$|=1;/^(Total Removed Size: |Packages \(\d+\):|:: Do you want to remove these packages|deleting |removing |    )/||/^$/||print'
+}
+
+pkg_verify_installed_arch() {
+    return 1
+}
+
+pkg_cumulate_arch() {
+    return 1
+}
+
+pkg_install_arch() {
+    # -d -d disables deps checking
+    ( cd $BUILD_ROOT && chroot $BUILD_ROOT pacman -U --force -d -d --noconfirm .init_b_cache/$PKG.$PSUF 2>&1 || touch $BUILD_ROOT/exit ) | \
+	perl -ne '$|=1;/^(warning: could not get filesystem information for |loading packages|looking for inter-conflicts|Targets |Total Installed Size: |Net Upgrade Size: |Proceed with installation|checking package integrity|loading package files|checking for file conflicts|checking keyring|Packages \(\d+\):|:: Proceed with installation|checking available disk space|installing |upgrading |warning:.*is up to date -- reinstalling|Optional dependencies for|    )/||/^$/||print'
+}
+
+pkg_finalize_arch() {
+    :
+}
+
+pkg_preinstall_arch() {
+    $TAR -f "$BUILD_ROOT/.init_b_cache/rpms/$PKG.arch"
+    if test -f .INSTALL ; then
+	cat .INSTALL > ".init_b_cache/scripts/$PKG.post"
+	echo 'type post_install >/dev/null 2>&1 && post_install' >> ".init_b_cache/scripts/$PKG.post"
+    fi
+    rm -f .PKGINFO .INSTALL
+}
+
+pkg_runscripts_arch() {
+    if test -e "$BUILD_ROOT/.init_b_cache/scripts/$PKG.post" ; then
+	echo "running $PKG postinstall script"
+	( cd $BUILD_ROOT && chroot $BUILD_ROOT ".init_b_cache/scripts/$PKG.post" < /dev/null )
+	rm -f "$BUILD_ROOT/.init_b_cache/scripts/$PKG.post"
+    fi
+}

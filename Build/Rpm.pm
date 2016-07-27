@@ -1,3 +1,23 @@
+################################################################
+#
+# Copyright (c) 1995-2014 SUSE Linux Products GmbH
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 or 3 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program (see the file COPYING); if not, write to the
+# Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA
+#
+################################################################
+
 package Build::Rpm;
 
 our $unfilteredprereqs = 0;
@@ -108,6 +128,9 @@ sub expr {
       ($v2, $expr) = expr(substr($expr, 1), 4);
       return undef unless defined $v2 && 0 + $v2;
       $v /= $v2;
+    } elsif ($expr =~ /^([=&|])/) {
+      warn("syntax error while parsing $1$1\n");
+      return ($v, $expr);
     } else {
       return ($v, $expr);
     }
@@ -130,7 +153,8 @@ sub grabargs {
   my %m;
   $m{'0'} = $macname;
   $m{'**'} = join(' ', @args);
-  my %go = (split(/(:?)/, $getopt, -1), undef);
+  my %go;
+  %go = ($getopt =~ /(.)(:*)/sg) if defined $getopt;
   while (@args && $args[0] =~ s/^-//) {
     my $o = shift @args;
     last if $o eq '-';
@@ -341,17 +365,27 @@ reexpand:
 	      $line = $2;
 	    }
 	    push @expandstack, ($expandedline, $line, $optmacros);
-	    $optmacros = adaptmacros(\%macros, $optmacros, grabargs($macname, $macros_args{$macname}, split(/ /, $macdata)));
+	    $optmacros = adaptmacros(\%macros, $optmacros, grabargs($macname, $macros_args{$macname}, split(' ', $macdata)));
 	    $line = $macros{$macname};
 	    $expandedline = '';
 	    next;
 	  }
 	  $macalt = $macros{$macname} unless defined $macalt;
 	  $macalt = '' if $mactest == -1;
-	  $line = "$macalt$line";
+	  if ($macalt =~ /%/) {
+	    push @expandstack, ('', $line, 1) if $line ne '';
+	    $line = $macalt;
+	  } else {
+	    $expandedline .= $macalt;
+	  }
 	} elsif ($mactest) {
 	  $macalt = '' if !defined($macalt) || $mactest == 1;
-	  $line = "$macalt$line";
+	  if ($macalt =~ /%/) {
+	    push @expandstack, ('', $line, 1) if $line ne '';
+	    $line = $macalt;
+	  } else {
+	    $expandedline .= $macalt;
+	  }
 	} else {
 	  $expandedline .= "%$macorig" unless $macname =~ /^-/;
 	}
@@ -360,12 +394,15 @@ reexpand:
       if (@expandstack) {
 	my $m = pop(@expandstack);
 	if ($m) {
-	  $optmacros = adaptmacros(\%macros, $optmacros, $m);
+	  $optmacros = adaptmacros(\%macros, $optmacros, $m) if ref $m;
 	  $expandstack[-2] .= $line;
-	  $line = '';
+	  $line = pop(@expandstack);
+	  $expandedline = pop(@expandstack);
+	} else {
+	  my $todo = pop(@expandstack);
+	  $expandedline = pop(@expandstack);
+	  push @expandstack, ('', $todo, 1) if $todo ne '';
 	}
-	$line = $line . pop(@expandstack);
-	$expandedline = pop(@expandstack);
 	goto reexpand;
       }
     }
@@ -565,6 +602,7 @@ my %rpmstag = (
   "EPOCH"          => 1003,
   "SUMMARY"        => 1004,
   "DESCRIPTION"    => 1005,
+  "BUILDTIME"      => 1006,
   "ARCH"           => 1022,
   "OLDFILENAMES"   => 1027,
   "SOURCERPM"      => 1044,
@@ -580,6 +618,31 @@ my %rpmstag = (
   "DIRINDEXES"     => 1116,
   "BASENAMES"      => 1117,
   "DIRNAMES"       => 1118,
+  "DISTURL"        => 1123,
+  "CONFLICTFLAGS"  => 1053,
+  "CONFLICTNAME"   => 1054,
+  "CONFLICTVERSION" => 1055,
+  "OBSOLETENAME"   => 1090,
+  "OBSOLETEFLAGS"  => 1114,
+  "OBSOLETEVERSION" => 1115,
+  "OLDSUGGESTSNAME" => 1156,
+  "OLDSUGGESTSVERSION" => 1157,
+  "OLDSUGGESTSFLAGS" => 1158,
+  "OLDENHANCESNAME" => 1159,
+  "OLDENHANCESVERSION" => 1160,
+  "OLDENHANCESFLAGS" => 1161,
+  "RECOMMENDNAME" => 5046,
+  "RECOMMENDVERSION" => 5047,
+  "RECOMMENDFLAGS" => 5048,
+  "SUGGESTNAME"    => 5049,
+  "SUGGESTVERSION" => 5050,
+  "SUGGESTFLAGS"   => 5051,
+  "SUPPLEMENTNAME" => 5052,
+  "SUPPLEMENTVERSION" => 5053,
+  "SUPPLEMENTFLAGS" => 5054,
+  "ENHANCENAME"    => 5055,
+  "ENHANCEVERSION" => 5056,
+  "ENHANCEFLAGS"   => 5057,
 );
 
 sub rpmq {
@@ -744,12 +807,9 @@ sub rpmq {
 }
 
 sub add_flagsvers {
-  my $res = shift;
-  my $name = shift;
-  my $flags = shift;
-  my $vers = shift;
+  my ($res, $name, $flags, $vers) = @_;
 
-  return unless $res;
+  return unless $res && $res->{$name};
   my @flags = @{$res->{$flags} || []};
   my @vers = @{$res->{$vers} || []};
   for (@{$res->{$name}}) {
@@ -763,6 +823,25 @@ sub add_flagsvers {
     shift @flags;
     shift @vers;
   }
+}
+
+sub filteroldweak {
+  my ($res, $name, $flags, $data, $strong, $weak) = @_;
+
+  return unless $res && $res->{$name};
+  my @flags = @{$res->{$flags} || []};
+  my @strong;
+  my @weak;
+  for (@{$res->{$name}}) {
+    if (@flags && ($flags[0] & 0x8000000)) {
+      push @strong, $_;
+    } else {
+      push @weak, $_;
+    }
+    shift @flags;
+  }
+  $data->{$strong} = \@strong if @strong;
+  $data->{$weak} = \@weak if @weak;
 }
 
 sub verscmp_part {
@@ -842,6 +921,11 @@ sub query {
   push @tags, qw{EPOCH VERSION RELEASE ARCH};
   push @tags, qw{FILENAMES} if $opts{'filelist'};
   push @tags, qw{SUMMARY DESCRIPTION} if $opts{'description'};
+  push @tags, qw{DISTURL} if $opts{'disturl'};
+  push @tags, qw{BUILDTIME} if $opts{'buildtime'};
+  push @tags, qw{CONFLICTNAME CONFLICTVERSION CONFLICTFLAGS OBSOLETENAME OBSOLETEVERSION OBSOLETEFLAGS} if $opts{'conflicts'};
+  push @tags, qw{RECOMMENDNAME RECOMMENDVERSION RECOMMENDFLAGS SUGGESTNAME SUGGESTVERSION SUGGESTFLAGS SUPPLEMENTNAME SUPPLEMENTVERSION SUPPLEMENTFLAGS ENHANCENAME ENHANCEVERSION ENHANCEFLAGS OLDSUGGESTSNAME OLDSUGGESTSVERSION OLDSUGGESTSFLAGS OLDENHANCESNAME OLDENHANCESVERSION OLDENHANCESFLAGS} if $opts{'weakdeps'};
+
   my %res = rpmq($handle, @tags);
   return undef unless %res;
   my $src = $res{'SOURCERPM'}->[0];
@@ -859,6 +943,27 @@ sub query {
   } else {
     $data->{'provides'} = [ grep {!/^rpmlib\(/ && !/^\//} @{$res{'PROVIDENAME'} || []} ];
     $data->{'requires'} = [ grep {!/^rpmlib\(/ && !/^\//} @{$res{'REQUIRENAME'} || []} ];
+  }
+  if ($opts{'conflicts'}) {
+    add_flagsvers(\%res, 'CONFLICTNAME', 'CONFLICTFLAGS', 'CONFLICTVERSION');
+    add_flagsvers(\%res, 'OBSOLETENAME', 'OBSOLETEFLAGS', 'OBSOLETEVERSION');
+    $data->{'conflicts'} = [ @{$res{'CONFLICTNAME'}} ] if $res{'CONFLICTNAME'};
+    $data->{'obsoletes'} = [ @{$res{'OBSOLETENAME'}} ] if $res{'OBSOLETENAME'};
+  }
+  if ($opts{'weakdeps'}) {
+    for (qw{RECOMMEND SUGGEST SUPPLEMENT ENHANCE}) {
+      next unless $res{"${_}NAME"};
+      add_flagsvers(\%res, "${_}NAME", "${_}FLAGS", "${_}VERSION");
+      $data->{lc($_)."s"} = [ @{$res{"${_}NAME"}} ];
+    }
+    if ($res{'OLDSUGGESTSNAME'}) {
+      add_flagsvers(\%res, 'OLDSUGGESTSNAME', 'OLDSUGGESTSFLAGS', 'OLDSUGGESTSVERSION');
+      filteroldweak(\%res, 'OLDSUGGESTSNAME', 'OLDSUGGESTSFLAGS', $data, 'recommends', 'suggests');
+    }
+    if ($res{'OLDENHANCESNAME'}) {
+      add_flagsvers(\%res, 'OLDENHANCESNAME', 'OLDENHANCESFLAGS', 'OLDENHANCESVERSION');
+      filteroldweak(\%res, 'OLDENHANCESNAME', 'OLDENHANCESFLAGS', $data, 'supplements', 'enhances');
+    }
   }
 
   # rpm3 compatibility: retrofit missing self provides
@@ -894,6 +999,8 @@ sub query {
     $data->{'summary'} = $res{'SUMMARY'}->[0];
     $data->{'description'} = $res{'DESCRIPTION'}->[0];
   }
+  $data->{'buildtime'} = $res{'BUILDTIME'}->[0] if $opts{'buildtime'};
+  $data->{'disturl'} = $res{'DISTURL'}->[0] if $opts{'disturl'} && $res{'DISTURL'};
   return $data;
 }
 
@@ -948,6 +1055,50 @@ sub queryhdrmd5 {
   }
   $md5off += 96 + 16 + $cnt * 16;
   return unpack("\@${md5off}H32", $buf);
+}
+
+sub queryinstalled {
+  my ($root, %opts) = @_;
+
+  $root = '' if !defined($root) || $root eq '/';
+  local *F;
+  my $dochroot = $root ne '' && !$opts{'nochroot'} && !$< ? 1 : 0;
+  my $pid = open(F, '-|');
+  die("fork: $!\n") unless defined $pid;
+  if (!$pid) {
+    if ($dochroot && chroot($root)) {
+      chdir('/') || die("chdir: $!\n");
+      $root = '';
+    }
+    my @args;
+    unshift @args, '--nodigest', '--nosignature' if -e "$root/usr/bin/rpmquery ";
+    unshift @args, '--dbpath', "$root/var/lib/rpm" if $root ne '';
+    push @args, '--qf', '%{NAME}/%{ARCH}/%|EPOCH?{%{EPOCH}}:{0}|/%{VERSION}/%{RELEASE}/%{BUILDTIME}\n';
+    if (-x "$root/usr/bin/rpm") {
+      exec("$root/usr/bin/rpm", '-qa', @args);
+      die("$root/usr/bin/rpm: $!\n");
+    }
+    if (-x "$root/bin/rpm") {
+      exec("$root/bin/rpm", '-qa', @args);
+      die("$root/bin/rpm: $!\n");
+    }
+    die("rpm: command not found\n");
+  }
+  my @pkgs;
+  while (<F>) {
+    chomp;
+    my @s = split('/', $_);
+    next unless @s >= 5;
+    my $q = {'name' => $s[0], 'arch' => $s[1], 'version' => $s[3], 'release' => $s[4]};
+    $q->{'epoch'} = $s[2] if $s[2];
+    $q->{'buildtime'} = $s[5] if $s[5];
+    push @pkgs, $q;
+  }
+  if (!close(F)) {
+    return queryinstalled($root, %opts, 'nochroot' => 1) if !@pkgs && $dochroot;
+    die("rpm: exit status $?\n");
+  }
+  return \@pkgs;
 }
 
 1;

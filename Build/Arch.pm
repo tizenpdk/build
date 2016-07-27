@@ -1,3 +1,23 @@
+################################################################
+#
+# Copyright (c) 1995-2014 SUSE Linux Products GmbH
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 or 3 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program (see the file COPYING); if not, write to the
+# Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA
+#
+################################################################
+
 package Build::Arch;
 
 use strict;
@@ -55,7 +75,7 @@ sub parse {
     my $var = $1;
     my $val = $3;
     if ($2) {
-      while ($val !~ s/\)\s*$//s) {
+      while ($val !~ s/\)\s*(?:#.*)?$//s) {
 	my $nextline = <PKG>;
 	last unless defined $nextline;
 	chomp $nextline;
@@ -68,6 +88,7 @@ sub parse {
   $ret->{'name'} = $vars{'pkgname'}->[0] if $vars{'pkgname'};
   $ret->{'version'} = $vars{'pkgver'}->[0] if $vars{'pkgver'};
   $ret->{'deps'} = $vars{'makedepends'} || [];
+  push @{$ret->{'deps'}}, @{$vars{'checkdepends'} || []};
   push @{$ret->{'deps'}}, @{$vars{'depends'} || []};
   $ret->{'source'} = $vars{'source'} if $vars{'source'};
   return $ret;
@@ -147,7 +168,7 @@ sub query {
   $ret->{'hdrmd5'} = Digest::MD5::md5_hex($vars->{'_pkginfo'});
   $ret->{'provides'} = $vars->{'provides'} || [];
   $ret->{'requires'} = $vars->{'depend'} || [];
-  if ($vars->{'pkgname'}) {
+  if ($vars->{'pkgname'} && $opts{'addselfprovides'}) {
     my $selfprovides = $vars->{'pkgname'}->[0];
     $selfprovides .= "=$vars->{'pkgver'}->[0]" if $vars->{'pkgver'};
     push @{$ret->{'provides'}}, $selfprovides unless @{$ret->{'provides'} || []} && $ret->{'provides'}->[-1] eq $selfprovides;
@@ -170,9 +191,19 @@ sub query {
   if ($opts{'description'}) {
     $ret->{'description'} = $vars->{'pkgdesc'}->[0] if $vars->{'pkgdesc'};
   }
+  if ($opts{'conflicts'}) {
+    $ret->{'conflicts'} = $vars->{'conflict'} if $vars->{'conflict'};
+    $ret->{'obsoletes'} = $vars->{'replaces'} if $vars->{'replaces'};
+  }
+  if ($opts{'weakdeps'}) {
+    my @suggests = @{$vars->{'optdepend'} || []};
+    s/:.*// for @suggests;
+    $ret->{'suggests'} = \@suggests if @suggests;
+  }
   # arch packages don't seem to have a source :(
   # fake it so that the package isn't confused with a src package
   $ret->{'source'} = $ret->{'name'} if defined $ret->{'name'};
+  $ret->{'buildtime'} = $vars->{'builddate'}->[0] if $opts{'buildtime'} && $vars->{'builddate'};
   return $ret;
 }
 
@@ -214,9 +245,42 @@ sub parserepodata {
       push @{$d->{'provides'}}, @p;
     } elsif ($p eq '%DEPENDS%') {
       push @{$d->{'requires'}}, @p;
+    } elsif ($p eq '%CONFLICTS%') {
+      push @{$d->{'conflicts'}}, @p;
+    } elsif ($p eq '%REPLACES%') {
+      push @{$d->{'obsoletes'}}, @p;
     }
   }
   return $d;
 }
+
+sub queryinstalled {
+  my ($root, %opts) = @_; 
+
+  $root = '' if !defined($root) || $root eq '/';
+  local *D;
+  local *F;
+  opendir(D, "$root/var/lib/pacman/local") || return [];
+  my @pn = sort(grep {!/^\./} readdir(D));
+  closedir(D);
+  my @pkgs;
+  for my $pn (@pn) {
+    next unless open(F, '<', "$root/var/lib/pacman/local/$pn/desc");
+    my $data = '';
+    1 while sysread(F, $data, 8192, length($data));
+    close F;
+    my $d = parserepodata(undef, $data);
+    next unless defined $d->{'name'};
+    my $q = {};
+    for (qw{name arch buildtime version}) {
+      $q->{$_} = $d->{$_} if defined $d->{$_};
+    }
+    $q->{'epoch'} = $1 if $q->{'version'} =~ s/^(\d+)://s;
+    $q->{'release'} = $1 if $q->{'version'} =~ s/-([^-]*)$//s;
+    push @pkgs, $q;
+  }
+  return \@pkgs;
+}
+
 
 1;
