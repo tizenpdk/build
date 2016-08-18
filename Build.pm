@@ -327,6 +327,10 @@ sub read_config {
       } else {
 	push @{$config->{'constraint'}}, $l;
       }
+    } elsif ($l0 eq 'rpmbuildstage:') { # use the rpmbuild --stage option
+      $config->{'rpmbuildstage'} = $l[0];
+    } elsif ($l0 eq 'copylinkedpackages:') { # to enable the RPM compariton tool for prerelease projects
+      # Since it is not used in build package, do nothing.
     } elsif ($l0 !~ /^[#%]/) {
       warn("unknown keyword in config: $l0\n");
     }
