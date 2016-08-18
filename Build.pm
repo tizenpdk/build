@@ -327,6 +327,8 @@ sub read_config {
       } else {
 	push @{$config->{'constraint'}}, $l;
       }
+    } elsif ($l0 eq 'rpmbuildstage:') { # use the rpmbuild --stage option
+      $config->{'rpmbuildstage'} = $l[0];
     } elsif ($l0 !~ /^[#%]/) {
       warn("unknown keyword in config: $l0\n");
     }
