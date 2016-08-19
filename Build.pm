@@ -173,11 +173,18 @@ sub read_config_dist {
   return $cf;
 }
 
+sub get_hostarch {
+	my $hostarch = `uname -m` || 'i586';
+	return $hostarch;
+}
+
 sub read_config {
   my ($arch, $cfile) = @_;
   my @macros = split("\n", $std_macros.$extra_macros);
   push @macros, "%define _target_cpu $arch";
   push @macros, "%define _target_os linux";
+  my $hostarch = get_hostarch();
+  push @macros, "%define hostarch $hostarch";
   my $config = {'macros' => \@macros, 'arch' => $arch};
   my @config;
   if (ref($cfile)) {

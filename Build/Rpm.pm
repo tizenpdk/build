@@ -436,6 +436,20 @@ reexpand:
       $hasif = 1;
       next;
     }
+    if ($line =~ /^\s*%ifhostarch(.*)$/) {
+      my $hostarch = $macros{'hostarch'} || 'unknown';
+      my @hostarchs = grep {$_ eq $hostarch} split(/\s+/, $1);
+      $skip = 1 if !@hostarchs;
+      $hasif = 1;
+      next;
+    }
+    if ($line =~ /^\s*%ifnhostarch(.*)$/) {
+      my $hostarch = $macros{'hostarch'} || 'unknown';
+      my @hostarchs = grep {$_ eq $hostarch} split(/\s+/, $1);
+      $skip = 1 if @hostarchs;
+      $hasif = 1;
+      next;
+    }
     if ($line =~ /^\s*%ifos(.*)$/) {
       my $os = $macros{'_target_os'} || 'unknown';
       my @oss = grep {$_ eq $os} split(/\s+/, $1);
