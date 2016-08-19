@@ -97,6 +97,7 @@ RUN_SHELL=
 CCACHE=
 DLNOSIGNATURE=
 CACHE_DIR=/var/cache/build
+USEHIGHERDEPS=
 
 
 # This is for insserv
@@ -923,6 +924,9 @@ while test -n "$1"; do
 	echo "$ARG does not take an argument"
 	cleanup_and_exit
       ;;
+      -use-higher-deps)
+        USEHIGHERDEPS="--use-higher-deps"
+      ;;
       -*)
 	if vm_parse_options "$@" ; then
 	    set -- "${nextargs[@]}"
@@ -993,7 +997,7 @@ if test -n "$LIST_STATE" ; then
 	recipe_unpack_srcrpm
 	RECIPEFILE="$MYSRCDIR/$RECIPEFILE"
     fi
-    init_buildsystem --configdir "$CONFIG_DIR" --cachedir "$CACHE_DIR" --list-state "${definesnstuff[@]}" "${repos[@]}" $DLNOSIGNATURE $KEEP_PACKS $USEUSEDFORBUILD $RECIPEFILE $BUILD_EXTRA_PACKS
+    init_buildsystem --configdir "$CONFIG_DIR" --cachedir "$CACHE_DIR" --list-state "${definesnstuff[@]}" "${repos[@]}" $DLNOSIGNATURE $KEEP_PACKS $USEHIGHERDEPS $USEUSEDFORBUILD $RECIPEFILE $BUILD_EXTRA_PACKS
     ERR=$?
     rm -rf "$BUILD_ROOT"
     cleanup_and_exit $ERR
@@ -1133,7 +1137,7 @@ for RECIPEFILE in "${RECIPEFILES[@]}" ; do
 	test "$BUILDTYPE" = mock && CREATE_BUILD_BINARIES=--create-build-binaries
 	test "$BUILDTYPE" = debootstrap && CREATE_BUILD_BINARIES=--create-build-binaries
 	test "$BUILDTYPE" = livebuild && CREATE_BUILD_BINARIES=--create-build-binaries
-	set -- init_buildsystem --configdir "$CONFIG_DIR" --cachedir "$CACHE_DIR" "${definesnstuff[@]}" "${repos[@]}" $CLEAN_BUILD $DLNOSIGNATURE $KEEP_PACKS $USEUSEDFORBUILD $CREATE_BUILD_BINARIES $RPMLIST "$MYSRCDIR/$RECIPEFILE" $ADDITIONAL_PACKS
+	set -- init_buildsystem --configdir "$CONFIG_DIR" --cachedir "$CACHE_DIR" "${definesnstuff[@]}" "${repos[@]}" $CLEAN_BUILD $DLNOSIGNATURE $KEEP_PACKS $USEHIGHERDEPS $USEUSEDFORBUILD $CREATE_BUILD_BINARIES $RPMLIST "$MYSRCDIR/$RECIPEFILE" $ADDITIONAL_PACKS
 	echo "$* ..."
         start_time=`date +%s`
 	"$@" || cleanup_and_exit 1
