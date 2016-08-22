@@ -9,7 +9,7 @@ use strict;
 use Build;
 use File::Basename;
 
-my ($dist, $rpmdeps, $archs, $configdir, $useusedforbuild);
+my ($dist, $rpmdeps, $archs, $configdir, $useusedforbuild, $usehigherdeps);
 
 while (@ARGV)  {
   if ($ARGV[0] eq '--dist') {
@@ -53,6 +53,11 @@ while (@ARGV)  {
     shift @ARGV;
     my $def = shift @ARGV;
     Build::define("_without_$def --without-$def");
+    next;
+  }
+  if ($ARGV[0] eq '--usehigherdeps') {
+    shift @ARGV;
+    $usehigherdeps = 1;
     next;
   }
   last;
@@ -148,7 +153,18 @@ while(<F>) {
     next if $req{$1};
     $req{$1} = $2;
   } elsif (/^I:(.*?)-\d+\/\d+\/\d+: (.*)$/) {
-    if ($ids{$1} && !$packs_done{$1} && defined($pkgF) && defined($pkgP) && defined($pkgR)) {
+    my $r = 0;
+    if ($usehigherdeps) {
+      $r = 1;
+    } else {
+      if ($packs_done{$1}) {
+        $r = 0;
+      } else {
+        $r = 1;
+      }
+    }
+
+    if ($ids{$1} && ($r == 1) && defined($pkgF) && defined($pkgP) && defined($pkgR)) {
       my $i = $1;
       my $oldid = $ids{$1};
       my $newid = $2;
