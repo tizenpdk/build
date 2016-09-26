@@ -1,4 +1,11 @@
-build (2015.01.15-tizen20160315) unstable; urgency=high
+build (20150115-tizen20160928) unstable; urgency=high
+
+  * update tizen version to tizen20160928
+
+ -- SoonKyu Park <sk7.park@samsung.com>  Wed, 28 Sep 2016 19:30:22 +0200
+
+
+build (20150115-tizen20160302) unstable; urgency=high
 
   * just update version to 2015.01.15 
 

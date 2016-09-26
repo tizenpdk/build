@@ -192,6 +192,10 @@ test -e default.conf
 /usr/lib/build/initvm.*
 
 %changelog
+* Wed Sep 28 2016 sk7.park@samsung.com
+- update tizen version to tizen20160928
+* Mon Feb 29 2016 jiankang.fan@samsung.com
+- update to version 2015.11.12
 * Tue Sep 11 2012 qiang.z.zhang@intel.com
 - update to version 2012.09.11
 * Sat Aug 11 2012 qiang.z.zhang@intel.com
