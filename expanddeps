@@ -29,7 +29,7 @@ use strict;
 use Build;
 use File::Basename;
 
-my ($dist, $rpmdeps, $archs, $configdir, $useusedforbuild, $installonly, $noinstall, $usehigherdeps);
+my ($dist, $rpmdeps, $archs, $configdir, $useusedforbuild, $installonly, $noinstall, $usehigherdeps, $isvm);
 
 $configdir = ($::ENV{'BUILD_DIR'} || '/usr/lib/build') . '/configs';
 
@@ -80,6 +80,11 @@ while (@ARGV)  {
   if ($ARGV[0] eq '--usehigherdeps') {
     shift @ARGV;
     $usehigherdeps = 1;
+    next;
+  }
+  if ($ARGV[0] eq '--vm') {
+    shift @ARGV;
+    $isvm = 1;
     next;
   }
   last;
@@ -410,6 +415,9 @@ Build::readdeps($cf, undef, \%repo);
 
 #######################################################################
 
+if ($isvm) {
+  push @packdeps, @{$cf->{'vminstall'}};
+}
 my @bdeps = Build::get_build($cf, $subpacks, @packdeps, @extradeps);
 
 if (!shift @bdeps) {
@@ -435,5 +443,8 @@ if (@sysdeps) {
 # make sure all preinstalls are in bdeps;
 # XXX: also add vmdeps?
 @bdeps = Build::unify(@bdeps, Build::get_preinstalls($cf));
+if ($isvm) {
+  @bdeps = Build::unify(@bdeps, Build::get_vminstalls($cf));
+}
 
 print_rpmlist(@bdeps);
