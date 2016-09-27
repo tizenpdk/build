@@ -45,7 +45,7 @@ Requires:       perl(LWP::UserAgent)
 Requires:       perl(Crypt::SSLeay)
 Requires:       perl(XML::Parser)
 Requires:       perl(Archive::Tar)
-Requires:       tizen-qemu-arm-static >= 2013.12.12
+Requires:       tizen-qemu-arm-static >= 2016.09.07
 Requires:       perl-Crypt-SSLeay >= 0.64-tizen20130308
 
 %if 0%{?fedora_version} || 0%{?suse_version} == 1220 || 0%{?centos_version}
