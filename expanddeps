@@ -126,7 +126,7 @@ if (defined($dist) && $dist ne '') {
   $binarytype = $cf->{'binarytype'} if $cf->{'binarytype'} && $cf->{'binarytype'} ne 'UNDEFINED';
 }
 
-my (%fn, %prov, %req, %con, %obs);
+my (%fn, %prov, %req, %rec, %con, %obs);
 
 my %packs;
 my %repo;
@@ -170,7 +170,7 @@ my %exportfilters = %{$cf->{'exportfilter'}};
 
 open(F, '<', $rpmdeps) || die("$rpmdeps: $!\n");
 # WARNING: the following code assumes that the 'I' tag comes last
-my ($pkgF, $pkgP, $pkgR, $pkgC, $pkgO);
+my ($pkgF, $pkgP, $pkgR, $pkgr, $pkgC, $pkgO);
 
 my $verscmp = \&Build::Rpm::verscmp;
 
@@ -210,6 +210,8 @@ while(<F>) {
     $pkgR = $2;
     next if $req{$1};
     $req{$1} = $2;
+  } elsif (/^r:(.*?)-\d+\/\d+\/\d+: (.*)$/) {
+    $pkgr = $2;
   } elsif (/^C:(.*?)-\d+\/\d+\/\d+: (.*)$/) {
     $pkgC = $2;
     next if $con{$1};
@@ -241,9 +243,11 @@ while(<F>) {
       $fn{$i}   = $pkgF;
       $prov{$i} = $pkgP;
       delete $req{$i};
+      delete $rec{$i};
       delete $con{$i};
       delete $obs{$i};
       $req{$i}  = $pkgR;
+      $rec{$i}  = $pkgr;
       $con{$i}  = $pkgC if defined $pkgC;
       $obs{$i}  = $pkgO if defined $pkgO;
     } else {
@@ -253,6 +257,7 @@ while(<F>) {
     undef $pkgF;
     undef $pkgP;
     undef $pkgR;
+    undef $pkgr;
     undef $pkgC;
     undef $pkgO;
   } elsif ($_ eq 'D:') {
@@ -267,7 +272,7 @@ for my $arch (@archs) {
 
 for my $pack (keys %packs) {
   my $r = {};
-  my (@s, $s, @pr, @re, @co, @ob);
+  my (@s, $s, @pr, @re, @rc, @co, @ob);
   @s = split(' ', $prov{$packs{$pack}} || '');
   while (@s) {
     $s = shift @s;
@@ -300,6 +305,22 @@ for my $pack (keys %packs) {
       splice(@s, 0, 2);
     }
   }
+  @s = split(' ', $rec{$packs{$pack}} || '');
+  while (@s) {
+    $s = shift @s;
+    next if !$dofileprovides && $s =~ /^\//;
+    if ($s =~ /^rpmlib\(/) {
+      splice(@s, 0, 2);
+      next;
+    }
+    push @rc, $s;
+    while (@s && $s[0] =~ /^[\(<=>|]/) {
+      $rc[-1] .= " $s[0] $s[1]";
+      $rc[-1] =~ s/ \((.*)\)/ $1/;
+      $rc[-1] =~ s/(<|>){2}/$1/;
+      splice(@s, 0, 2);
+    }
+  }
   @s = split(' ', $con{$packs{$pack}} || '');
   while (@s) {
     $s = shift @s;
@@ -326,6 +347,7 @@ for my $pack (keys %packs) {
   }
   $r->{'provides'} = \@pr;
   $r->{'requires'} = \@re;
+  $r->{'recommends'} = \@rc;
   $r->{'conflicts'} = \@co;
   $r->{'obsoletes'} = \@ob;
   $repo{$pack} = $r;

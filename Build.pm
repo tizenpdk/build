@@ -585,8 +585,8 @@ sub get_cbinstalls { return @{[]}; }
 
 sub readdeps {
   my ($config, $pkginfo, @depfiles) = @_;
-
   my %requires;
+  my %recommends;
   local *F;
   my %provides;
   my %pkgconflicts;
@@ -597,6 +597,7 @@ sub readdeps {
       for my $rr (keys %$depfile) {
 	$provides{$rr} = $depfile->{$rr}->{'provides'};
 	$requires{$rr} = $depfile->{$rr}->{'requires'};
+	$recommends{$rr} = $depfile->{$rr}->{'recommends'};
 	$pkgconflicts{$rr} = $depfile->{$rr}->{'conflicts'};
 	$pkgobsoletes{$rr} = $depfile->{$rr}->{'obsoletes'};
       }
@@ -640,7 +641,7 @@ sub readdeps {
       }
       my %ss;
       @ss = grep {!$ss{$_}++} @ss;
-      if ($s =~ /^(P|R|C|O):(.*)\.(.*)-\d+\/\d+\/\d+:$/) {
+      if ($s =~ /^(P|R|C|O|r):(.*)\.(.*)-\d+\/\d+\/\d+:$/) {
 	my $pkgid = $2;
 	my $arch = $3;
 	if ($1 eq "P") {
@@ -654,6 +655,11 @@ sub readdeps {
 	if ($1 eq "R") {
 	  $requires{$pkgid} = \@ss;
 	  $pkginfo->{$pkgid}->{'requires'} = \@ss if $pkginfo;
+	  next;
+	}
+	if ($1 eq "r") {
+	  $recommends{$pkgid} = \@ss;
+	  $pkginfo->{$pkgid}->{'recommends'} = \@ss if $pkginfo;
 	  next;
 	}
 	if ($1 eq "C") {
@@ -687,6 +693,7 @@ sub readdeps {
   }
   $config->{'providesh'} = \%provides;
   $config->{'requiresh'} = \%requires;
+  $config->{'recommendsh'} = \%recommends;
   $config->{'pkgconflictsh'} = \%pkgconflicts;
   $config->{'pkgobsoletesh'} = \%pkgobsoletes;
   makewhatprovidesh($config);
@@ -714,6 +721,7 @@ sub writedeps {
   print $fh "F:$id$url$pkg->{'location'}\n";
   print $fh "P:$id".join(' ', @{$pkg->{'provides'} || []})."\n";
   print $fh "R:$id".join(' ', @{$pkg->{'requires'}})."\n" if $pkg->{'requires'};
+  print $fh "r:$id".join(' ', @{$pkg->{'recommends'}})."\n" if $pkg->{'recommends'};
   print $fh "C:$id".join(' ', @{$pkg->{'conflicts'}})."\n" if $pkg->{'conflicts'};
   print $fh "O:$id".join(' ', @{$pkg->{'obsoletes'}})."\n" if $pkg->{'obsoletes'};
   print $fh "I:$id".getbuildid($pkg)."\n";
@@ -749,6 +757,7 @@ sub forgetdeps {
   delete $config->{'providesh'};
   delete $config->{'whatprovidesh'};
   delete $config->{'requiresh'};
+  delete $config->{'recommendsh'};
   delete $config->{'pkgconflictsh'};
   delete $config->{'pkgobsoletesh'};
 }
@@ -866,6 +875,7 @@ sub expand {
 
   my $whatprovides = $config->{'whatprovidesh'};
   my $requires = $config->{'requiresh'};
+  my $recommends = $config->{'recommendsh'};
 
   my %xignore = map {substr($_, 1) => 1} grep {/^-/} @p;
   my @directdepsend;
@@ -975,6 +985,22 @@ sub expand {
 		last;
 	    }
 	}
+	if (@q > 1 && $config->{"buildflags:userecommendsforchoices"} && @{$recommends->{$p} || []} > 0) {
+	  my @recommendedq;
+	  my $i;
+
+	  for my $iq (@q) {
+	    for my $rpkg (@{$recommends->{$p}}) {
+	      if ($rpkg =~ /$iq/) {
+	        push @recommendedq, $iq;
+	      }
+	    }
+	  }
+	  if (@recommendedq > 0) {
+            print "recommended [@recommendedq] among [@q]\n" if $expand_dbg;
+	    @q = @recommendedq;
+	  }
+	}
 	if (@q > 1) {
 	  if ($r ne $p) {
 	    push @error, "have choice for $r needed by $p: @q";
@@ -1020,6 +1046,7 @@ sub order {
   my ($config, @p) = @_;
 
   my $requires = $config->{'requiresh'};
+  my $recommends = $config->{'recommendsh'};
   my $whatprovides = $config->{'whatprovidesh'};
   my %deps;
   my %rdeps;
@@ -1117,6 +1144,7 @@ sub add_all_providers {
   my ($config, @p) = @_;
   my $whatprovides = $config->{'whatprovidesh'};
   my $requires = $config->{'requiresh'};
+  my $recommends = $config->{'recommendsh'};
   my %a;
   for my $p (@p) {
     for my $r (@{$requires->{$p} || [$p]}) {
