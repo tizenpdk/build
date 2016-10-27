@@ -488,6 +488,7 @@ sub readdeps {
   my ($config, $pkginfo, @depfiles) = @_;
 
   my %requires = ();
+  my %recommends = ();
   local *F;
   my %provides;
   my $dofileprovides = %{$config->{'fileprovides'}};
@@ -496,6 +497,7 @@ sub readdeps {
       for my $rr (keys %$depfile) {
 	$provides{$rr} = $depfile->{$rr}->{'provides'};
 	$requires{$rr} = $depfile->{$rr}->{'requires'};
+	$recommends{$rr} = $depfile->{$rr}->{'recommends'};
       }
       next;
     }
@@ -528,7 +530,7 @@ sub readdeps {
       }
       my %ss;
       @ss = grep {!$ss{$_}++} @ss;
-      if ($s =~ /^(P|R):(.*)\.(.*)-\d+\/\d+\/\d+:$/) {
+      if ($s =~ /^(P|R|r):(.*)\.(.*)-\d+\/\d+\/\d+:$/) {
 	my $pkgid = $2;
 	my $arch = $3;
 	if ($1 eq "R") {
@@ -547,6 +549,11 @@ sub readdeps {
 	  $pkginfo->{$pkgid}->{'release'} = $r if defined($r);
 	  $pkginfo->{$pkgid}->{'arch'} = $arch;
 	  $pkginfo->{$pkgid}->{'provides'} = \@ss;
+	if ($1 eq "r") {
+	  $recommends{$pkgid} = \@ss;
+	  $pkginfo->{$pkgid}->{'recommends'} = \@ss if $pkginfo;
+	  next;
+	}
 	}
       }
     }
@@ -554,9 +561,39 @@ sub readdeps {
   }
   $config->{'providesh'} = \%provides;
   $config->{'requiresh'} = \%requires;
+  $config->{'recommendsh'} = \%recommends;
   makewhatprovidesh($config);
 }
 
+sub getbuildid {
+  my ($q) = @_;
+  my $evr = $q->{'version'};
+  $evr = "$q->{'epoch'}:$evr" if $q->{'epoch'};
+  $evr .= "-$q->{'release'}" if defined $q->{'release'};;
+  my $buildtime = $q->{'buildtime'} || 0;
+  $evr .= " $buildtime";
+  $evr .= "-$q->{'arch'}" if defined $q->{'arch'};
+  return "$q->{'name'}-$evr";
+}
+
+sub writedeps {
+  my ($fh, $pkg, $url) = @_;
+  $url = '' unless defined $url;
+  return unless defined($pkg->{'name'}) && defined($pkg->{'arch'});
+  return if $pkg->{'arch'} eq 'src' || $pkg->{'arch'} eq 'nosrc';
+  my $id = $pkg->{'id'};
+  $id = ($pkg->{'buildtime'} || 0)."/".($pkg->{'filetime'} || 0)."/0" unless $id;
+  $id = "$pkg->{'name'}.$pkg->{'arch'}-$id: ";
+  print $fh "F:$id$url$pkg->{'location'}\n";
+  print $fh "P:$id".join(' ', @{$pkg->{'provides'} || []})."\n";
+  print $fh "R:$id".join(' ', @{$pkg->{'requires'}})."\n" if $pkg->{'requires'};
+  print $fh "r:$id".join(' ', @{$pkg->{'recommends'}})."\n" if $pkg->{'recommends'};
+  print $fh "C:$id".join(' ', @{$pkg->{'conflicts'}})."\n" if $pkg->{'conflicts'};
+  print $fh "O:$id".join(' ', @{$pkg->{'obsoletes'}})."\n" if $pkg->{'obsoletes'};
+  print $fh "I:$id".getbuildid($pkg)."\n";
+}
+
+>>>>>>> d6ff6eb... Recognize Recommends relations of RPMs.
 sub makewhatprovidesh {
   my ($config) = @_;
 
@@ -587,6 +624,7 @@ sub forgetdeps {
   delete $config->{'providesh'};
   delete $config->{'whatprovidesh'};
   delete $config->{'requiresh'};
+  delete $config->{'recommendsh'};
 }
 
 my %addproviders_fm = (
@@ -667,6 +705,7 @@ sub expand {
 
   my $whatprovides = $config->{'whatprovidesh'};
   my $requires = $config->{'requiresh'};
+  my $recommends = $config->{'recommendsh'};
 
   my %xignore = map {substr($_, 1) => 1} grep {/^-/} @p;
   @p = grep {!/^-/} @p;
@@ -745,6 +784,22 @@ sub expand {
 		last;
 	    }
 	}
+	if (@q > 1 && $config->{"buildflags:userecommendsforchoices"} && @{$recommends->{$p} || []} > 0) {
+	  my @recommendedq;
+	  my $i;
+
+	  for my $iq (@q) {
+	    for my $rpkg (@{$recommends->{$p}}) {
+	      if ($rpkg =~ /$iq/) {
+	        push @recommendedq, $iq;
+	      }
+	    }
+	  }
+	  if (@recommendedq > 0) {
+            print "recommended [@recommendedq] among [@q]\n" if $expand_dbg;
+	    @q = @recommendedq;
+	  }
+	}
 	if (@q > 1) {
 	  if ($r ne $p) {
 	    push @error, "have choice for $r needed by $p: @q";
@@ -782,6 +837,7 @@ sub order {
   my ($config, @p) = @_;
 
   my $requires = $config->{'requiresh'};
+  my $recommends = $config->{'recommendsh'};
   my $whatprovides = $config->{'whatprovidesh'};
   my %deps;
   my %rdeps;
@@ -879,6 +935,7 @@ sub add_all_providers {
   my ($config, @p) = @_;
   my $whatprovides = $config->{'whatprovidesh'};
   my $requires = $config->{'requiresh'};
+  my $recommends = $config->{'recommendsh'};
   my %a;
   for my $p (@p) {
     for my $r (@{$requires->{$p} || [$p]}) {

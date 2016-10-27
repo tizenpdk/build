@@ -83,7 +83,7 @@ if ($spec =~ /(^|\/)PKGBUILD$/) {
   push @archs, 'noarch' unless grep {$_ eq 'noarch'} @archs;
 }
 
-my (%fn, %prov, %req);
+my (%fn, %prov, %req, %rec);
 
 my %packs;
 my %repo;
@@ -127,7 +127,7 @@ my $dofileprovides = %{$cf->{'fileprovides'}};
 my %exportfilters = %{$cf->{'exportfilter'}};
 open(F, '<', $rpmdeps) || die("$rpmdeps: $!\n");
 # WARNING: the following code assumes that the 'I' tag comes last
-my ($pkgF, $pkgP, $pkgR);
+my ($pkgF, $pkgP, $pkgR, $pkgr);
 while(<F>) {
   chomp;
   if (/^F:(.*?)-\d+\/\d+\/\d+: (.*)$/) {
@@ -157,6 +157,8 @@ while(<F>) {
     $pkgR = $2;
     next if $req{$1};
     $req{$1} = $2;
+  } elsif (/^r:(.*?)-\d+\/\d+\/\d+: (.*)$/) {
+    $pkgr = $2;
   } elsif (/^I:(.*?)-\d+\/\d+\/\d+: (.*)$/) {
     my $r = 0;
     if ($usehigherdeps) {
@@ -178,6 +180,7 @@ while(<F>) {
         $fn{$i}   = $pkgF;
         $prov{$i} = $pkgP;
         $req{$i}  = $pkgR;
+        $rec{$i}  = $pkgr;
       }
     } else {
       next if $ids{$1};
@@ -186,6 +189,7 @@ while(<F>) {
     undef $pkgF;
     undef $pkgP;
     undef $pkgR;
+    undef $pkgr;
   } elsif ($_ eq 'D:') {
     %packs_done = %ids;
   }
@@ -197,7 +201,7 @@ for my $arch (@archs) {
 }
 for my $pack (keys %packs) {
   my $r = {};
-  my (@s, $s, @pr, @re);
+  my (@s, $s, @pr, @re, @rc);
   @s = split(' ', $prov{$packs{$pack}} || '');
   while (@s) {
     $s = shift @s;
@@ -222,6 +226,7 @@ for my $pack (keys %packs) {
   }
   $r->{'provides'} = \@pr;
   $r->{'requires'} = \@re;
+  $r->{'recommends'} = \@rc;
   $repo{$pack} = $r;
 }
 
