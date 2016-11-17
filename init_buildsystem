@@ -47,6 +47,9 @@ repos=()
 
 BUILD_IS_RUNNING=$BUILD_ROOT/not-ready
 TMPFILE=$BUILD_ROOT/tmpfile
+RPMIDFMT="%{NAME}-%{VERSION}-%{RELEASE} %{BUILDTIME}-%{ARCH}\n"
+RPMCHECKOPTS_HOST=
+test -x /usr/bin/rpmquery && RPMCHECKOPTS_HOST="--nodigest --nosignature"
 
 # should RPMs be installed with --force ?
 USE_FORCE=false
@@ -424,7 +427,7 @@ can_reuse_cached_package() {
     local cachepkgid pkgid
     test -s "$1" || return 1
     if test -s "$BUILD_ROOT/.init_b_cache/rpms/$PKG.id" ; then
-        pkgid=$(perl -I$BUILD_DIR -MBuild -e Build::showquery "$1" buildid)
+        pkgid=$(rpm -qp --qf "${RPMIDFMT}" $RPMCHECKOPTS_HOST "${1}")
 	read cachepkgid < $BUILD_ROOT/.init_b_cache/rpms/$PKG.id
 	test "$cachepkgid" = "$pkgid" || return 1
     fi
