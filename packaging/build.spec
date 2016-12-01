@@ -36,6 +36,11 @@ BuildRoot:      %{_tmppath}/%{name}-%{version}-build
 AutoReqProv:    off
 # Keep the following dependencies in sync with obs-worker package
 BuildRequires:  glibc-devel
+%if 0%{?suse_version}
+BuildRequires:  glibc-devel-static
+%else
+BuildRequires:  glibc-static
+%endif
 Requires:       bash
 Requires:       perl
 Requires:       binutils
@@ -134,6 +139,8 @@ chroot or a secure virtualized
 %build
 # initvm
 make CFLAGS="$RPM_BUILD_FLAGS" initvm-all
+# host_arch
+make CFLAGS="$RPM_BUILD_FLAGS" host_arch-all
 
 %if 0%{?fedora} == 23
 %global debug_package %{nil}
@@ -145,6 +152,11 @@ make DESTDIR=$RPM_BUILD_ROOT initvm-install
 strip $RPM_BUILD_ROOT/usr/lib/build/initvm.*
 export NO_BRP_STRIP_DEBUG="true"
 chmod 0644 $RPM_BUILD_ROOT/usr/lib/build/initvm.*
+# host_arch
+make DESTDIR=$RPM_BUILD_ROOT host_arch-install
+strip $RPM_BUILD_ROOT/usr/lib/build/host_arch
+export NO_BRP_STRIP_DEBUG="true"
+chmod 0644 $RPM_BUILD_ROOT/usr/lib/build/host_arch
 
 # main
 make DESTDIR=$RPM_BUILD_ROOT install

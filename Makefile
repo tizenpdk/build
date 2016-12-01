@@ -91,6 +91,16 @@ initvm-install: initvm
 	install -m755 -d $(DESTDIR)$(pkglibdir)
 	install -m755 initvm.$(INITVM_ARCH) $(DESTDIR)$(pkglibdir)/initvm.$(INITVM_ARCH)
 
+host_arch: host_arch.c
+	$(CC) -o $@ -static $(CFLAGS) host_arch.c
+
+host_arch-all: host_arch
+
+host_arch-build: host_arch
+
+host_arch-install: host_arch
+	install -m755 -d $(DESTDIR)$(pkglibdir)
+	install -m755 host_arch $(DESTDIR)$(pkglibdir)/host_arch
 
 dist:
 ifeq ($(SCM),svn)

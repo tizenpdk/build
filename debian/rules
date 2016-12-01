@@ -25,6 +25,7 @@ configure-stamp:
 
 build: build-stamp
 	make initvm-all
+	make host_arch-all
 build-stamp: configure-stamp
 	dh_testdir
 	touch build-stamp
@@ -43,6 +44,8 @@ install: build
 	dh_installdirs
 	make DESTDIR=$(CURDIR)/debian/build initvm-install
 	chmod 0644 $(CURDIR)/debian/build/usr/lib/build/initvm.*
+	make DESTDIR=$(CURDIR)/debian/build host_arch-install
+	chmod 0644 $(CURDIR)/debian/build/usr/lib/build/host_arch
 	make DESTDIR=$(CURDIR)/debian/build install
 
 binary-arch: build install

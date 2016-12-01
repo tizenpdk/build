@@ -24,6 +24,7 @@ use strict;
 use Digest::MD5;
 use Build::Rpm;
 use Data::Dumper;
+use File::Basename;
 
 our $expand_dbg;
 
@@ -174,7 +175,8 @@ sub read_config_dist {
 }
 
 sub get_hostarch {
-	my $hostarch = `uname -m` || 'i586';
+	my $dirname = dirname(__FILE__);
+	my $hostarch = `$dirname/host_arch` || 'i586';
 	return $hostarch;
 }
 
