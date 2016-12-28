@@ -47,6 +47,9 @@ repos=()
 
 BUILD_IS_RUNNING=$BUILD_ROOT/not-ready
 TMPFILE=$BUILD_ROOT/tmpfile
+RPMIDFMT="%{NAME}-%{VERSION}-%{RELEASE} %{BUILDTIME}-%{ARCH}\n"
+RPMCHECKOPTS_HOST=
+test -x /usr/bin/rpmquery && RPMCHECKOPTS_HOST="--nodigest --nosignature"
 
 # should RPMs be installed with --force ?
 USE_FORCE=false
@@ -424,7 +427,7 @@ can_reuse_cached_package() {
     local cachepkgid pkgid
     test -s "$1" || return 1
     if test -s "$BUILD_ROOT/.init_b_cache/rpms/$PKG.id" ; then
-        pkgid=$(perl -I$BUILD_DIR -MBuild -e Build::showquery "$1" buildid)
+        pkgid=$(rpm -qp --qf "${RPMIDFMT}" $RPMCHECKOPTS_HOST "${1}")
 	read cachepkgid < $BUILD_ROOT/.init_b_cache/rpms/$PKG.id
 	test "$cachepkgid" = "$pkgid" || return 1
     fi
@@ -579,7 +582,9 @@ else
 	#
 	RPMLIST=$BUILD_ROOT/.init_b_cache/rpmlist
 	test -z "$LIST_STATE" && echo "expanding package dependencies..."
-	if ! $BUILD_DIR/expanddeps $USEUSEDFORBUILD $USEHIGHERDEPS "${definesnstuff[@]}" --dist "$BUILD_DIST" --depfile "$CACHE_FILE" --archpath "$BUILD_ARCH" --configdir $CONFIG_DIR "${PKGS[@]}" > $RPMLIST ; then
+        VMOPT=
+        test -z "$PREPARE_VM" || VMOPT=--vm
+	if ! $BUILD_DIR/expanddeps $USEUSEDFORBUILD $VMOPT $USEHIGHERDEPS "${definesnstuff[@]}" --dist "$BUILD_DIST" --depfile "$CACHE_FILE" --archpath "$BUILD_ARCH" --configdir $CONFIG_DIR "${PKGS[@]}" > $RPMLIST ; then
 	    rm -f $BUILD_IS_RUNNING
 	    cleanup_and_exit 1
 	fi
@@ -604,9 +609,9 @@ else
     # register the QEMU emulator if needed
     # (we do not need this for the prepare step, as we do not run scripts in this case)
     #
+    copy_qemu
     if test -z "$PREPARE_VM" ; then
 	if check_use_emulator ; then
-	    copy_qemu
 	    echo "registering binfmt handlers for cross build"
 	    "$BUILD_DIR/$INITVM_NAME"
 	    echo 0 > /proc/sys/vm/mmap_min_addr

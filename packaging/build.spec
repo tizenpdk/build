@@ -1,4 +1,4 @@
-#
+#	
 # spec file for package build
 #
 # Copyright (c) 2012 SUSE LINUX Products GmbH, Nuernberg, Germany.
@@ -45,7 +45,7 @@ Requires:       perl(LWP::UserAgent)
 Requires:       perl(Crypt::SSLeay)
 Requires:       perl(XML::Parser)
 Requires:       perl(Archive::Tar)
-Requires:       tizen-qemu-arm-static >= 2013.12.12
+Requires:       tizen-qemu-arm-static >= 2016.12.31
 Requires:       perl-Crypt-SSLeay >= 0.64-tizen20130308
 
 %if 0%{?fedora_version} || 0%{?suse_version} == 1220 || 0%{?centos_version}
@@ -72,7 +72,7 @@ Requires:       build-mkbaselibs
 %if 0%{?suse_version} > 1120 || 0%{?mdkversion}
 Recommends:     build-mkdrpms
 %endif
-Provides:   tizen-build = 20160311
+Provides:   tizen-build = 20161231
 %description
 This package provides a script for building RPMs for SUSE Linux in a
 chroot environment.
@@ -116,7 +116,7 @@ Group:          Development/Tools/Building
 Requires:       build
 BuildRequires:  gcc
 BuildRequires:  glibc-devel
-Provides:       tizen-build-initvm-%{initvm_arch} = 20160311
+Provides:       tizen-build-initvm-%{initvm_arch} = 20161231
 Obsoletes:      build-initvm
 %if 0%{?suse_version}
 BuildRequires:  glibc-devel-static
@@ -194,6 +194,10 @@ test -e default.conf
 /usr/lib/build/initvm.*
 
 %changelog
+* Sat Dec 31 2016 sk7.park@samsung.com
+- update tizen version to tizen20161231
+* Wed Sep 28 2016 sk7.park@samsung.com
+- update tizen version to tizen20160928
 * Mon Feb 29 2016 jiankang.fan@samsung.com
 - update to version 2015.11.12
 * Tue Sep 11 2012 qiang.z.zhang@intel.com
