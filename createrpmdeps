@@ -15,6 +15,8 @@ my %tag;
 
 my %oldp;
 my %oldr;
+my %oldrec;
+my %olds;
 if (defined($rpmdepfile) && open(F, '<', $rpmdepfile)) {
   while (<F>) {
     chomp;
@@ -22,6 +24,10 @@ if (defined($rpmdepfile) && open(F, '<', $rpmdepfile)) {
       $oldp{$1} = $_;
     } elsif (/^R:([^ ]): /) {
       $oldr{$1} = $_;
+    } elsif (/^r:([^ ]): /) {
+      $oldrec{$1} = $_;
+    } elsif (/^s:([^ ]): /) {
+      $olds{$1} = $_;
     }
   }
   close F;
@@ -74,17 +80,23 @@ foreach my $dir (@ARGV) {
 
   my %newp;
   my %newr;
+  my %newrec;
+  my %news;
   for (@known) {
     $newp{$_} = $oldp{$_} if $oldp{$_};
     $newr{$_} = $oldr{$_} if $oldr{$_};
+    $newrec{$_} = $oldrec{$_} if $oldrec{$_};
+    $news{$_} = $olds{$_} if $olds{$_};
   }
 
-  my @todo = grep {!($newp{$_} && $newr{$_})} @known;
+  my @todo = grep {!($newp{$_} && $newr{$_} && $newrec{$_} && $news{$_})} @known;
   if (@todo) {
     for my $known (@todo) {
       my $path = $known2path{$known};
       if ($path =~ /\.rpm$/) {
 	my %res = Build::Rpm::rpmq($path, 1000, 1001, 1002, 1006, 1022, 1047, 1049, 1048, 1050, 1112, 1113);
+        my $q = Build::Rpm::query($path, 'weakdeps' => 1);
+	next unless $q;
 	next unless %res;
 	Build::Rpm::add_flagsvers(\%res, 1047, 1112, 1113);
 	Build::Rpm::add_flagsvers(\%res, 1049, 1048, 1050);
@@ -107,6 +119,8 @@ foreach my $dir (@ARGV) {
 
 	$newp{$known} = "P:$known: ".join(' ', @{$res{1047} || []});
 	$newr{$known} = "R:$known: ".join(' ', @{$res{1049} || []});
+	$newrec{$known} = "r:$known: ".join(' ', @{$q->{'recommends'} || []}) if $q->{'recommends'};
+	$news{$known} = "s:$known: ".join(' ', @{$q->{'suggests'} || []}) if $q->{'suggests'};
 	#$tag{$known} = $res{1000}->[0]."-".$res{1001}->[0]."-".$res{1002}->[0]." ".$res{1007}->[0]."-".$res{1006}->[0];
 	$tag{$known} = $res{1000}->[0]."-".$res{1001}->[0]."-".$res{1002}->[0]." ".$res{1006}->[0];
       } else {
@@ -141,6 +155,8 @@ foreach my $dir (@ARGV) {
     print "F:$_: $known2path{$_}\n";
     print "$newp{$_}\n";
     print "$newr{$_}\n";
+    print "$newrec{$_}\n" if $newrec{$_};
+    print "$news{$_}\n" if $news{$_};
     print "I:$_: $tag{$_}\n" if exists $tag{$_};
   }
 }

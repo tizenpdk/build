@@ -594,6 +594,24 @@ my %rpmstag = (
   "DIRINDEXES"     => 1116,
   "BASENAMES"      => 1117,
   "DIRNAMES"       => 1118,
+  "OLDSUGGESTSNAME" => 1156,
+  "OLDSUGGESTSVERSION" => 1157,
+  "OLDSUGGESTSFLAGS" => 1158,
+  "OLDENHANCESNAME" => 1159,
+  "OLDENHANCESVERSION" => 1160,
+  "OLDENHANCESFLAGS" => 1161,
+  "RECOMMENDNAME" => 5046,
+  "RECOMMENDVERSION" => 5047,
+  "RECOMMENDFLAGS" => 5048,
+  "SUGGESTNAME"    => 5049,
+  "SUGGESTVERSION" => 5050,
+  "SUGGESTFLAGS"   => 5051,
+  "SUPPLEMENTNAME" => 5052,
+  "SUPPLEMENTVERSION" => 5053,
+  "SUPPLEMENTFLAGS" => 5054,
+  "ENHANCENAME"    => 5055,
+  "ENHANCEVERSION" => 5056,
+  "ENHANCEFLAGS"   => 5057,
 );
 
 sub rpmq {
@@ -779,6 +797,25 @@ sub add_flagsvers {
   }
 }
 
+sub filteroldweak {
+  my ($res, $name, $flags, $data, $strong, $weak) = @_;
+
+  return unless $res && $res->{$name};
+  my @flags = @{$res->{$flags} || []};
+  my @strong;
+  my @weak;
+  for (@{$res->{$name}}) {
+    if (@flags && ($flags[0] & 0x8000000)) {
+      push @strong, $_;
+    } else {
+      push @weak, $_;
+    }
+    shift @flags;
+  }
+  $data->{$strong} = \@strong if @strong;
+  $data->{$weak} = \@weak if @weak;
+}
+
 sub verscmp_part {
   my ($s1, $s2) = @_;
   if (!defined($s1)) {
@@ -856,6 +893,7 @@ sub query {
   push @tags, qw{EPOCH VERSION RELEASE ARCH};
   push @tags, qw{FILENAMES} if $opts{'filelist'};
   push @tags, qw{SUMMARY DESCRIPTION} if $opts{'description'};
+  push @tags, qw{RECOMMENDNAME RECOMMENDVERSION RECOMMENDFLAGS SUGGESTNAME SUGGESTVERSION SUGGESTFLAGS SUPPLEMENTNAME SUPPLEMENTVERSION SUPPLEMENTFLAGS ENHANCENAME ENHANCEVERSION ENHANCEFLAGS OLDSUGGESTSNAME OLDSUGGESTSVERSION OLDSUGGESTSFLAGS OLDENHANCESNAME OLDENHANCESVERSION OLDENHANCESFLAGS} if $opts{'weakdeps'};
   my %res = rpmq($handle, @tags);
   return undef unless %res;
   my $src = $res{'SOURCERPM'}->[0];
@@ -873,6 +911,22 @@ sub query {
   } else {
     $data->{'provides'} = [ grep {!/^rpmlib\(/ && !/^\//} @{$res{'PROVIDENAME'} || []} ];
     $data->{'requires'} = [ grep {!/^rpmlib\(/ && !/^\//} @{$res{'REQUIRENAME'} || []} ];
+  }
+
+  if ($opts{'weakdeps'}) {
+    for (qw{RECOMMEND SUGGEST SUPPLEMENT ENHANCE}) {
+      next unless $res{"${_}NAME"};
+      add_flagsvers(\%res, "${_}NAME", "${_}FLAGS", "${_}VERSION");
+      $data->{lc($_)."s"} = [ @{$res{"${_}NAME"}} ];
+    }
+    if ($res{'OLDSUGGESTSNAME'}) {
+      add_flagsvers(\%res, 'OLDSUGGESTSNAME', 'OLDSUGGESTSFLAGS', 'OLDSUGGESTSVERSION');
+      filteroldweak(\%res, 'OLDSUGGESTSNAME', 'OLDSUGGESTSFLAGS', $data, 'recommends', 'suggests');
+    }
+    if ($res{'OLDENHANCESNAME'}) {
+      add_flagsvers(\%res, 'OLDENHANCESNAME', 'OLDENHANCESFLAGS', 'OLDENHANCESVERSION');
+      filteroldweak(\%res, 'OLDENHANCESNAME', 'OLDENHANCESFLAGS', $data, 'supplements', 'enhances');
+    }
   }
 
   # rpm3 compatibility: retrofit missing self provides

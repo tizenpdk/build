@@ -83,7 +83,7 @@ if ($spec =~ /(^|\/)PKGBUILD$/) {
   push @archs, 'noarch' unless grep {$_ eq 'noarch'} @archs;
 }
 
-my (%fn, %prov, %req);
+my (%fn, %prov, %req, %rec, %sup);
 
 my %packs;
 my %repo;
@@ -127,7 +127,7 @@ my $dofileprovides = %{$cf->{'fileprovides'}};
 my %exportfilters = %{$cf->{'exportfilter'}};
 open(F, '<', $rpmdeps) || die("$rpmdeps: $!\n");
 # WARNING: the following code assumes that the 'I' tag comes last
-my ($pkgF, $pkgP, $pkgR);
+my ($pkgF, $pkgP, $pkgR, $pkgr, $pkgs);
 while(<F>) {
   chomp;
   if (/^F:(.*?)-\d+\/\d+\/\d+: (.*)$/) {
@@ -157,6 +157,10 @@ while(<F>) {
     $pkgR = $2;
     next if $req{$1};
     $req{$1} = $2;
+  } elsif (/^r:(.*?)-\d+\/\d+\/\d+: (.*)$/) {
+    $pkgr = $2;
+  } elsif (/^s:(.*?)-\d+\/\d+\/\d+: (.*)$/) {
+    $pkgs = $2;
   } elsif (/^I:(.*?)-\d+\/\d+\/\d+: (.*)$/) {
     my $r = 0;
     if ($usehigherdeps) {
@@ -178,6 +182,8 @@ while(<F>) {
         $fn{$i}   = $pkgF;
         $prov{$i} = $pkgP;
         $req{$i}  = $pkgR;
+        $rec{$i}  = $pkgr if defined $pkgr;
+        $sup{$i}  = $pkgs if defined $pkgs;
       }
     } else {
       next if $ids{$1};
@@ -186,6 +192,8 @@ while(<F>) {
     undef $pkgF;
     undef $pkgP;
     undef $pkgR;
+    undef $pkgr;
+    undef $pkgs;
   } elsif ($_ eq 'D:') {
     %packs_done = %ids;
   }
@@ -197,7 +205,7 @@ for my $arch (@archs) {
 }
 for my $pack (keys %packs) {
   my $r = {};
-  my (@s, $s, @pr, @re);
+  my (@s, $s, @pr, @re, @rc, @su);
   @s = split(' ', $prov{$packs{$pack}} || '');
   while (@s) {
     $s = shift @s;
@@ -220,8 +228,43 @@ for my $pack (keys %packs) {
     push @re, $s;
     splice(@s, 0, 2) if @s && $s[0] =~ /^[<=>]/;
   }
+  @s = split(' ', $rec{$packs{$pack}} || '');
+  while (@s) {
+    $s = shift @s;
+    next if !$dofileprovides && $s =~ /^\//;
+    if ($s =~ /^rpmlib\(/) {
+      splice(@s, 0, 2);
+      next;
+    }
+    push @rc, $s;
+    while (@s && $s[0] =~ /^[\(<=>|]/) {
+      $rc[-1] .= " $s[0] $s[1]";
+      $rc[-1] =~ s/ \((.*)\)/ $1/;
+      $rc[-1] =~ s/(<|>){2}/$1/;
+      splice(@s, 0, 2);
+    }
+  }
+  @s = split(' ', $sup{$packs{$pack}} || '');
+  while (@s) {
+    $s = shift @s;
+    next if !$dofileprovides && $s =~ /^\//;
+    if ($s =~ /^rpmlib\(/) {
+      splice(@s, 0, 2);
+      next;
+    }
+    push @su, $s;
+    while (@s && $s[0] =~ /^[\(<=>|]/) {
+      $su[-1] .= " $s[0] $s[1]";
+      $su[-1] =~ s/ \((.*)\)/ $1/;
+      $su[-1] =~ s/(<|>){2}/$1/;
+      splice(@s, 0, 2);
+    }
+  }
+
   $r->{'provides'} = \@pr;
   $r->{'requires'} = \@re;
+  $r->{'recommends'} = \@rc;
+  $r->{'supplements'} = \@su;
   $repo{$pack} = $r;
 }
 
