@@ -159,8 +159,10 @@ while(<F>) {
     $req{$1} = $2;
   } elsif (/^r:(.*?)-\d+\/\d+\/\d+: (.*)$/) {
     $pkgr = $2;
+    $rec{$1}  = $pkgr if defined $pkgr;
   } elsif (/^s:(.*?)-\d+\/\d+\/\d+: (.*)$/) {
     $pkgs = $2;
+    $sup{$1}  = $pkgs if defined $pkgs;
   } elsif (/^I:(.*?)-\d+\/\d+\/\d+: (.*)$/) {
     my $r = 0;
     if ($usehigherdeps) {

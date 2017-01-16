@@ -61,6 +61,8 @@ my $primaryparser = {
 	'rpm:requires' => { 'rpm:entry' => { _start => \&primary_handle_package_requires }, },
 	'rpm:conflicts' => { 'rpm:entry' => { _start => \&primary_handle_package_conflicts }, },
 	'rpm:obsoletes' => { 'rpm:entry' => { _start => \&primary_handle_package_obsoletes }, },
+	'rpm:supplements' => { 'rpm:entry' => { _start => \&primary_handle_package_supplements }, },
+	'rpm:recommends' => { 'rpm:entry' => { _start => \&primary_handle_package_recommends }, },
 	'rpm:buildhost' => { _text => \&primary_collect_text, _end => \&primary_store_text },
 	'rpm:sourcerpm' => { _text => \&primary_collect_text, _end => \&primary_store_text },
 ### currently commented out, as we ignore file provides in createrpmdeps
@@ -310,6 +312,16 @@ sub primary_handle_package_deps
 
 }
 
+sub primary_handle_package_supplements
+{
+  shift;shift; primary_handle_package_deps('supplements', @_);
+}
+
+sub primary_handle_package_recommends
+{
+  shift;shift; primary_handle_package_deps('recommends', @_);
+}
+
 sub primary_handle_package_conflicts
 {
   shift;shift; primary_handle_package_deps('conflicts', @_);
@@ -360,6 +372,12 @@ sub printasbuildcachefile(@)
 
     $deps = deps2string(@{$pkg->{'requires'}});
     print "R:$id$deps\n";
+
+    $deps = deps2string(@{$pkg->{'recommends'}});
+    print "r:$id$deps\n" if $deps;
+
+    $deps = deps2string(@{$pkg->{'supplements'}});
+    print "s:$id$deps\n" if $deps;
 
     my $tag = sprintf("%s-%s-%s %s",
       $pkg->{'name'},
