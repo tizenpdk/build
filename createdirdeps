@@ -51,7 +51,7 @@ my %old;
 if (defined($oldfile) && open(F, '<', $oldfile)) {
   while (<F>) {
     chomp;
-    $old{$1} = $_ if /^([PRrCOI]:[^ ]+): /;
+    $old{$1} = $_ if /^([PRrsCOI]:[^ ]+): /;
   }
   close F;
 }
@@ -78,7 +78,7 @@ for my $dir (@ARGV) {
 	  next if $seen{$idx};
 	  $seen{$idx} = 1;
 	  print "F:$idx: $path\n";
-	  for (qw{P R C O I r s}) {
+	  for (qw{P R r s C O I}) {
 	    print $old{"$_:$idx"}."\n" if $old{"$_:$idx"};
 	  }
 	  next;
