@@ -33,6 +33,7 @@ use Build::Rpmmd;
 use Digest::MD5 ();
 use File::Path qw(mkpath rmtree);
 use File::Basename;
+use File::Path;
 use IPC::SysV qw(IPC_PRIVATE S_IRUSR S_IWUSR IPC_CREAT IPC_EXCL SEM_UNDO);
 use IPC::Semaphore;
 
@@ -82,42 +83,52 @@ my @packages;		# for opt_dump
 for my $url (@ARGV) {
   my $dir;
   my $baseurl = $url;
+  my $needrm = 0;
+  my $repodir;
   if ($opt_zypp) {
     $dir = $opt_zypp;
+    $dir .= '/' unless $dir =~ /\/$/;
+    $baseurl .= '/' unless $baseurl =~ /\/$/;
+    $repodir = "${dir}repodata/";
   } elsif ($url =~ /^(?:ftps?|https?):\/\/([^\/]*)\/?/) {
     my $repoid = Digest::MD5::md5_hex($url);
     $dir = "$cachedir/$repoid/";
     $baseurl .= '/' unless $baseurl =~ /\/$/;
+    mkpath("${dir}repodata-$$");
     mkpath("${dir}repodata");
-    my $sem;
-    my $key = IPC::SysV::ftok($dir, '1');
-    if ($sem = IPC::Semaphore->new($key, 1, S_IRUSR | S_IWUSR | IPC_CREAT | IPC_EXCL)) {
-      $sem->setval(0, 1);
-    } else {
-      $sem = IPC::Semaphore->new($key, 1, S_IRUSR | S_IWUSR | IPC_CREAT);
-    }
+    #my $sem;
+    #my $key = IPC::SysV::ftok($dir, '1');
+    #if ($sem = IPC::Semaphore->new($key, 1, S_IRUSR | S_IWUSR | IPC_CREAT | IPC_EXCL)) {
+    #  $sem->setval(0, 1);
+    #} else {
+    #  $sem = IPC::Semaphore->new($key, 1, S_IRUSR | S_IWUSR | IPC_CREAT);
+    #}
 
-    $sem->op(0, -1, SEM_UNDO);
-    if (!-f "${dir}repodata/repomd.xml") {
-      system($INC[0].'/download', "${dir}repodata", "${baseurl}repodata/repomd.xml");
-    }
-    $sem->op(0, 1, SEM_UNDO);
-    $sem->remove();
+    #$sem->op(0, -1, SEM_UNDO);
+    #if (!-f "${dir}repodata/repomd.xml.$$") {
+      system($INC[0].'/download', "${dir}repodata-$$", "${baseurl}repodata/repomd.xml");
+    #}
+    #$sem->op(0, 1, SEM_UNDO);
+    #$sem->remove();
+    $repodir = "${dir}repodata-$$/";
+    $needrm = 1;
   } else {
     $dir = $url;
+    $dir .= '/' unless $dir =~ /\/$/;
+    $baseurl .= '/' unless $baseurl =~ /\/$/;
+    $repodir = "${dir}repodata/";
   }
-  $dir .= '/' unless $dir =~ /\/$/;
-  $baseurl .= '/' unless $baseurl =~ /\/$/;
 
-  if (! -s "${dir}repodata/repomd.xml") {
+  if (! -s "${repodir}repomd.xml") {
     die("zypp repo $url is not up to date, please refresh first\n") if $opt_zypp;
     die("repo $url does not contain a repomd.xml file\n");
   }
 
   my @primaryfiles;
-  Build::Rpmmd::parse_repomd("${dir}repodata/repomd.xml", \@primaryfiles);
+  Build::Rpmmd::parse_repomd("${repodir}repomd.xml", \@primaryfiles);
   @primaryfiles = grep {$_->{'type'} eq 'primary' && defined($_->{'location'})} @primaryfiles;
 #  print Dumper(\@primaryfiles);
+  rmtree "$repodir" if ($needrm == 1);
 
   for my $f (@primaryfiles) {
     my $u = "$dir$f->{'location'}";
