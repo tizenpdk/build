@@ -978,8 +978,13 @@ for PKG in $MAIN_LIST ; do
 	    continue
 	fi
     fi
-
-    PKGID=$(perl -I$BUILD_DIR -MBuild -e Build::showquery "$BUILD_ROOT/.init_b_cache/rpms/$PKG.$PSUF" buildid)
+    
+    # revert use rpm to query pkgid if building rpm package 
+    if test "$PSUF" != "rpm" ; then
+        PKGID=$(perl -I$BUILD_DIR -MBuild -e Build::showquery "$BUILD_ROOT/.init_b_cache/rpms/$PKG.$PSUF" buildid)
+    else
+        PKGID=`rpm -qp --qf "$RPMIDFMT" $RPMCHECKOPTS_HOST $BUILD_ROOT/.init_b_cache/rpms/$PKG.rpm`
+    fi
 
     if test -f $BUILD_ROOT/.init_b_cache/alreadyinstalled/$PKG ; then
 	read OLDPKGID < $BUILD_ROOT/.init_b_cache/alreadyinstalled/$PKG

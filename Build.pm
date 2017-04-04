@@ -586,11 +586,13 @@ sub get_cbinstalls { return @{[]}; }
 sub readdeps {
   my ($config, $pkginfo, @depfiles) = @_;
 
-  my %requires;
   local *F;
+  my %requires;
   my %provides;
   my %pkgconflicts;
   my %pkgobsoletes;
+  my %recommends;
+  my %supplements;
   my $dofileprovides = %{$config->{'fileprovides'} || {}};
   for my $depfile (@depfiles) {
     if (ref($depfile) eq 'HASH') {
@@ -599,6 +601,8 @@ sub readdeps {
 	$requires{$rr} = $depfile->{$rr}->{'requires'};
 	$pkgconflicts{$rr} = $depfile->{$rr}->{'conflicts'};
 	$pkgobsoletes{$rr} = $depfile->{$rr}->{'obsoletes'};
+	$recommends{$rr} = $depfile->{$rr}->{'recommends'};
+	$supplements{$rr} = $depfile->{$rr}->{'supplements'};
       }
       next;
     }
@@ -640,7 +644,7 @@ sub readdeps {
       }
       my %ss;
       @ss = grep {!$ss{$_}++} @ss;
-      if ($s =~ /^(P|R|C|O):(.*)\.(.*)-\d+\/\d+\/\d+:$/) {
+      if ($s =~ /^(P|R|C|O|r|s):(.*)\.(.*)-\d+\/\d+\/\d+:$/) {
 	my $pkgid = $2;
 	my $arch = $3;
 	if ($1 eq "P") {
@@ -666,6 +670,16 @@ sub readdeps {
 	  $pkginfo->{$pkgid}->{'obsoletes'} = \@ss if $pkginfo;
 	  next;
 	}
+	if ($1 eq "r") {
+	  $recommends{$pkgid} = \@ss;
+	  $pkginfo->{$pkgid}->{'recommends'} = \@ss if $pkginfo;
+	  next;
+	}
+	if ($1 eq "s") {
+	  $supplements{$pkgid} = \@ss;
+	  $pkginfo->{$pkgid}->{'supplements'} = \@ss if $pkginfo;
+	  next;
+	}
       }
     }
     close F;
@@ -689,6 +703,8 @@ sub readdeps {
   $config->{'requiresh'} = \%requires;
   $config->{'pkgconflictsh'} = \%pkgconflicts;
   $config->{'pkgobsoletesh'} = \%pkgobsoletes;
+  $config->{'recommendsh'} = \%recommends;
+  $config->{'supplementsh'} = \%supplements;
   makewhatprovidesh($config);
 }
 
@@ -716,6 +732,8 @@ sub writedeps {
   print $fh "R:$id".join(' ', @{$pkg->{'requires'}})."\n" if $pkg->{'requires'};
   print $fh "C:$id".join(' ', @{$pkg->{'conflicts'}})."\n" if $pkg->{'conflicts'};
   print $fh "O:$id".join(' ', @{$pkg->{'obsoletes'}})."\n" if $pkg->{'obsoletes'};
+  print $fh "r:$id".join(' ', @{$pkg->{'recommends'}})."\n" if $pkg->{'recommends'};
+  print $fh "s:$id".join(' ', @{$pkg->{'supplements'}})."\n" if $pkg->{'supplements'};
   print $fh "I:$id".getbuildid($pkg)."\n";
 }
 
@@ -751,6 +769,8 @@ sub forgetdeps {
   delete $config->{'requiresh'};
   delete $config->{'pkgconflictsh'};
   delete $config->{'pkgobsoletesh'};
+  delete $config->{'recommendsh'};
+  delete $config->{'supplementsh'};
 }
 
 my %addproviders_fm = (
@@ -854,6 +874,17 @@ sub checkobsoletes {
   return 0;
 }
 
+sub todo2recommended {
+  my ($config, $recommended, $todo) = @_;
+  my $whatprovides = $config->{'whatprovidesh'};
+  my $pkgrecommends = $config->{'recommendsh'} || {};
+  for my $p (splice @$todo) {
+    for my $r (@{$pkgrecommends->{$p} || []}) {
+      $recommended->{$_} = 1 for @{$whatprovides->{$r} || addproviders($config, $r)}
+    }
+  }
+}
+
 sub expand {
   my ($config, @p) = @_;
 
@@ -863,6 +894,8 @@ sub expand {
   my $prefer = $config->{'preferh'};
   my $ignore = $config->{'ignoreh'};
   my $ignoreconflicts = $config->{'expandflags:ignoreconflicts'};
+  my $ignoreignore;
+  my $userecommendsforchoices = 1;
 
   my $whatprovides = $config->{'whatprovidesh'};
   my $requires = $config->{'requiresh'};
@@ -880,8 +913,18 @@ sub expand {
   }
   @p = grep {!/^-/} @p;
 
-  my %p;		# expanded packages
   my %aconflicts;	# packages we are conflicting with
+  for (grep {/^!/} @p) {
+    my $r = /^!!/ ? substr($_, 2) : substr($_, 1);
+    my @q = @{$whatprovides->{$r} || addproviders($config, $r)};
+    @q = nevrmatch($config, $r, @q) if /^!!/;
+    $aconflicts{$_} = "is in BuildConflicts" for @q;
+  }
+  my %recommended;	# recommended by installed packages
+  my @rec_todo;		# installed todo
+
+  @p = grep {!/^[-!]/} @p;
+  my %p;		# expanded packages
 
   # add direct dependency packages. this is different from below,
   # because we add packages even if the dep is already provided and
@@ -910,6 +953,7 @@ sub expand {
 	$aconflicts{$_} = "is obsoleted by installed $q[0]" for nevrmatch($config, $r, @{$whatprovides->{$r} || addproviders($config, $r)});
       }
     }
+    push @rec_todo, $q[0] if $userecommendsforchoices;
   }
   push @p, @directdepsend;
 
@@ -975,6 +1019,12 @@ sub expand {
 		last;
 	    }
 	}
+	if ($doamb == 2) {
+	  todo2recommended($config, \%recommended, \@rec_todo) if @rec_todo;
+	  my @pq = grep {$recommended{$_}} @q;
+	  print "recommended [@pq] among [@q]\n" if $expand_dbg;
+	  @q = @pq if @pq;
+	}
 	if (@q > 1) {
 	  if ($r ne $p) {
 	    push @error, "have choice for $r needed by $p: @q";
@@ -996,6 +1046,7 @@ sub expand {
 	    $aconflicts{$_} = "is obsoleted by installed $q[0]" for nevrmatch($config, $r, @{$whatprovides->{$r} || addproviders($config, $r)});
 	  }
         }
+	push @rec_todo, $q[0] if $userecommendsforchoices;
 	@error = ();
 	$doamb = 0;
       }
@@ -1004,11 +1055,12 @@ sub expand {
     next if @p;		# still work to do
 
     # only ambig stuff left
-    if (@pamb && !$doamb) {
+    if (@pamb && ($doamb == 0 || $doamb == 1)) {
       @p = @pamb;
       @pamb = ();
-      $doamb = 1;
-      print "now doing undecided dependencies\n" if $expand_dbg;
+      todo2recommended($config, \%recommended, \@rec_todo) if @rec_todo;
+      $doamb = %recommended ? 2 : 3;
+      print "now doing undecided dependencies, $doamb = $doamb\n" if $expand_dbg;
       next;
     }
     return undef, @error if @error;
@@ -1020,6 +1072,7 @@ sub order {
   my ($config, @p) = @_;
 
   my $requires = $config->{'requiresh'};
+  my $recommends = $config->{'recommendsh'};
   my $whatprovides = $config->{'whatprovidesh'};
   my %deps;
   my %rdeps;
@@ -1117,6 +1170,7 @@ sub add_all_providers {
   my ($config, @p) = @_;
   my $whatprovides = $config->{'whatprovidesh'};
   my $requires = $config->{'requiresh'};
+  my $recommends = $config->{'recommendsh'};
   my %a;
   for my $p (@p) {
     for my $r (@{$requires->{$p} || [$p]}) {
