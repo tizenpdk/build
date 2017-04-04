@@ -1,3 +1,9 @@
+build (20150115-tizen20170405) unstable; urgency=high
+
+  * update tizen version to tizen20170405
+
+ -- SoonKyu Park <sk7.park@samsung.com>  Wed, 5 Apr 2017 19:00:00 +0900
+
 build (20150115-tizen20170114) unstable; urgency=high
 
   * update tizen version to tizen20170114
