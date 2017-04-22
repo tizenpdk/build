@@ -39,8 +39,10 @@ my %obs2debian = (
   "armv4l"  => "armel",
   "armv5l"  => "armel",
   "armv6l"  => "armel",
-  "armv7l"  => "armel",
-  "armv7hl" => "armhf"
+  "armv7el" => "armel",
+  "armv7l"  => "armhf",
+  "armv7hl" => "armhf",
+  "aarch64" => "arm64",
 );
 
 sub basearch {
@@ -102,7 +104,7 @@ sub parse {
       $version =~ s/-[^-]+$//;
     } elsif ($tag eq 'ARCHITECTURE') {
       my @archs = split('\s+', $data);
-      map { s/$os-//; s/any-// } @archs;
+      map { s/\Q$os\E-//; s/any-// } @archs;
       next if grep { $_ eq "any" || $_ eq "all" } @archs;
       @exclarch = map { obsarch($_) } @archs;
       # unify
@@ -116,6 +118,25 @@ sub parse {
         my @alts = split('\s*\|\s*', $d);
         my @needed;
         for my $c (@alts) {
+          if ($c =~ /\s+<[^>]+>$/) {
+            my @build_profiles;  # Empty for now
+            my $bad = 1;
+            while ($c =~ s/\s+<([^>]+)>$//) {
+              next if (!$bad);
+              my $list_valid = 1;
+              for my $term (split(/\s+/, $1)) {
+                my $isneg = ($term =~ s/^\!//);
+                my $profile_match = grep(/^$term$/, @build_profiles);
+                if (( $profile_match &&  $isneg) ||
+                    (!$profile_match && !$isneg)) {
+                  $list_valid = 0;
+                  last;
+                }
+              }
+              $bad = 0 if ($list_valid);
+            }
+            next if ($bad);
+          }
           if ($c =~ /^(.*?)\s*\[(.*)\]$/) {
             $c = $1;
             my $isneg = 0;
@@ -132,10 +153,10 @@ sub parse {
                 $bad = 0;
               }
             }
-            push @needed, $c unless $bad;
-          } else {
-            push @needed, $c;
+            next if ($bad);
           }
+          $c =~ s/^([^:\s]*):(any|native)(.*)$/$1$3/;
+          push @needed, $c;
         }
         next unless @needed;
         $d = join(' | ', @needed);
@@ -210,11 +231,12 @@ sub debq {
   my $data = '';
   sysread(DEBF, $data, 4096);
   if (length($data) < 8+60) {
-    warn("$fn: not a debian package\n");
+    warn("$fn: not a debian package - header too short\n");
     close DEBF unless ref $fn;
     return ();
   }
-  if (substr($data, 0, 8+16) ne "!<arch>\ndebian-binary   ") {
+  if (substr($data, 0, 8+16) ne "!<arch>\ndebian-binary   " &&
+      substr($data, 0, 8+16) ne "!<arch>\ndebian-binary/  ") {
     close DEBF unless ref $fn;
     return ();
   }
@@ -230,7 +252,8 @@ sub debq {
     }
   }
   $data = substr($data, 8 + 60 + $len);
-  if (substr($data, 0, 16) ne 'control.tar.gz  ') {
+  if (substr($data, 0, 16) ne 'control.tar.gz  ' &&
+      substr($data, 0, 16) ne 'control.tar.gz/ ') {
     warn("$fn: control.tar.gz is not second ar entry\n");
     close DEBF unless ref $fn;
     return ();
@@ -266,7 +289,7 @@ sub debq {
       warn("$fn: corrupt control.tar.gz file\n");
       return ();
     }
-    if ($n eq './control') {
+    if ($n eq './control' || $n eq "control") {
       $control = substr($data, 512, $len);
       last;
     }
@@ -342,12 +365,13 @@ sub queryhdrmd5 {
   my $data = '';
   sysread(F, $data, 4096);
   if (length($data) < 8+60) {
-    warn("$bin: not a debian package\n");
+    warn("$bin: not a debian package - header too short\n");
     close F;
     return undef;
   }
-  if (substr($data, 0, 8+16) ne "!<arch>\ndebian-binary   ") {
-    warn("$bin: not a debian package\n");
+  if (substr($data, 0, 8+16) ne "!<arch>\ndebian-binary   " &&
+      substr($data, 0, 8+16) ne "!<arch>\ndebian-binary/  ") {
+    warn("$bin: not a debian package - no \"debian-binary\" entry\n");
     close F;
     return undef;
   }
@@ -363,7 +387,8 @@ sub queryhdrmd5 {
     }
   }
   $data = substr($data, 8 + 60 + $len);
-  if (substr($data, 0, 16) ne 'control.tar.gz  ') {
+  if (substr($data, 0, 16) ne 'control.tar.gz  ' &&
+      substr($data, 0, 16) ne 'control.tar.gz/ ') {
     warn("$bin: control.tar.gz is not second ar entry\n");
     close F;
     return undef;

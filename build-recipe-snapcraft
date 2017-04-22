@@ -2,7 +2,7 @@
 #
 # Debian live-build specific functions.
 #
-# Author: Jan Blunck <jblunck@infradead.org>
+# Author: Adrian Schroeter <adrian@suse.de>
 #
 # This file is part of build.
 #
@@ -22,10 +22,10 @@
 #
 #################################################################
 
-recipe_setup_livebuild() {
+recipe_setup_snapcraft() {
     TOPDIR=/usr/src/packages
     test "$DO_INIT_TOPDIR" = false || rm -rf "$BUILD_ROOT$TOPDIR"
-    for i in OTHER SOURCES LIVEBUILD_ROOT ; do
+    for i in OTHER SOURCES SNAPCRAFT_ROOT ; do
 	mkdir -p "$BUILD_ROOT$TOPDIR/$i"
     done
     chown -R "$ABUILD_UID:$ABUILD_GID" "$BUILD_ROOT$TOPDIR"
@@ -36,7 +36,7 @@ recipe_setup_livebuild() {
     fi
 }
 
-recipe_prepare_livebuild() {
+recipe_prepare_snapcraft() {
     :
 }
 
@@ -107,20 +107,20 @@ createrepo_debian() {
 }
 
 # This script expects that the $BUILD_ROOT is a Debian installation with
-# live-build already installed!
+# snapcraft already installed!
 #
 # Variables:
 # $BUILD_ROOT the Debian chroot
-# $TOPDIR/SOURCES includes the live-build config tarball
-# $TOPDIR/$LIVEBUILD_ROOT where live-build will be called
-# $RECIPEFILE the name of the live-build config tarball
+# $TOPDIR/SOURCES includes the snapcraft sources
+# $TOPDIR/$SNAPCRAFT_ROOT where snapcraft will be called
+# $RECIPEFILE the name of the snapcraft.yaml config file
 
-recipe_build_livebuild() {
+recipe_build_snapcraft() {
     local ARCH=$(chroot $BUILD_ROOT su -c "dpkg-architecture -qDEB_BUILD_ARCH")
-    local DIST=$(chroot $BUILD_ROOT su -c "lsb_release --codename" | awk '{ print $2 }')
-    local LIVEBUILD_ROOT="LIVEBUILD_ROOT"
+#    local DIST=$(chroot $BUILD_ROOT su -c "lsb_release --codename" | awk '{ print $2 }')
+    local SNAPCRAFT_ROOT="SNAPCRAFT_ROOT"
 
-    [ -z "${ARCH}" -o -z "${DIST}" ] && cleanup_and_exit 1
+#    [ -z "${ARCH}" -o -z "${DIST}" ] && cleanup_and_exit 1
 
     test -d $BUILD_ROOT/.build.binaries || cleanup_and_exit 1
     if test "$DO_INIT" = true -o ! -d "$BUILD_ROOT/.build.binaries/dists" ; then
@@ -128,96 +128,18 @@ recipe_build_livebuild() {
         createrepo_debian $BUILD_ROOT/.build.binaries ${ARCH} ${DIST}
     fi
 
-    # Write our default configuration variables
-    mkdir -p $BUILD_ROOT/etc/live
-    cat > $BUILD_ROOT/etc/live/build.conf <<-EOF
-	LB_DEBIAN_INSTALLER_DISTRIBUTION="${DIST}"
-	LB_DISTRIBUTION="${DIST}"
-	LB_PARENT_DISTRIBUTION="${DIST}"
-	LB_PARENT_DEBIAN_INSTALLER_DISTRIBUTION="${DIST}"
-	LB_PARENT_MIRROR_BOOTSTRAP="file:/.build.binaries/"
-	LB_PARENT_MIRROR_CHROOT="file:/.build.binaries/"
-	LB_PARENT_MIRROR_CHROOT_SECURITY="file:/.build.binaries/"
-	LB_PARENT_MIRROR_BINARY="file:/.build.binaries/"
-	LB_PARENT_MIRROR_BINARY_SECURITY="file:/.build.binaries/"
-	LB_PARENT_MIRROR_DEBIAN_INSTALLER="file:/.build.binaries/"
-	LB_MIRROR_BOOTSTRAP="file:/.build.binaries/"
-	LB_MIRROR_CHROOT="file:/.build.binaries/"
-	LB_MIRROR_CHROOT_SECURITY="file:/.build.binaries/"
-	LB_MIRROR_BINARY="file:/.build.binaries/"
-	LB_MIRROR_BINARY_SECURITY="file:/.build.binaries/"
-	LB_MIRROR_DEBIAN_INSTALLER="file:/.build.binaries/"
-	LB_APT_SECURE="false"
-	LIVE_IMAGE_NAME="${RECIPEFILE%.livebuild}"
-	EOF
-
-    # Expand live-build configuration to $TOPDIR/$LIVEBUILD_ROOT
-    echo "Expanding live-build configuration"
-    tar -xvf $BUILD_ROOT/$TOPDIR/SOURCES/$RECIPEFILE \
-	-C $BUILD_ROOT/$TOPDIR/$LIVEBUILD_ROOT || cleanup_and_exit 1
-
-    # Skip top-level directory if it matches recipe name, ...
-    local files=($BUILD_ROOT/$TOPDIR/$LIVEBUILD_ROOT/*)
-    # ... but ignore some well known names
-    files=(${files[@]%%*/auto})
-    files=(${files[@]%%*/config})
-    files=(${files[@]%%*/local})
-    if [ ${#files[@]} -eq 1 ] && \
-	[ -d $BUILD_ROOT/$TOPDIR/$LIVEBUILD_ROOT/${RECIPEFILE%.livebuild} ]
-    then
-	LIVEBUILD_ROOT="LIVEBUILD_ROOT/${RECIPEFILE%.livebuild}"
-    fi
-
-    # Sanity check to not configure archives inside configuration
-    files=($BUILD_ROOT/$TOPDIR/$LIVEBUILD_ROOT/config/archives/*)
-    if [ ${#files[@]} -gt 0 ]; then
-        echo "E: No configuration in config/archives/* allowed"
-        cleanup_and_exit 1
-    fi
-
-    # TODO: Add the repository public key
-    # cp ... $BUILD_ROOT/$TOPDIR/$LIVEBUILD_ROOT/config/archives/debian.key
-
-    if [ -x $BUILD_ROOT/usr/lib/build/livebuild_pre_run ] ; then
-	echo "Running OBS build livebuild_pre_run hook"
-	chroot $BUILD_ROOT su -c \
-        "export RECIPEFILE=${RECIPEFILE}; /usr/lib/build/livebuild_pre_run" \
-        - root < /dev/null || cleanup_and_exit 1
-    fi
-
-    # TODO: this might move to lb auto/config file
-    if [ -f $BUILD_ROOT/$TOPDIR/SOURCES/livebuild_pre_run ] ; then
-	cp $BUILD_ROOT/$TOPDIR/SOURCES/livebuild_pre_run \
-	    $BUILD_ROOT/.build.livebuild_pre_run
-	chmod +x $BUILD_ROOT/.build.livebuild_pre_run
-	echo "Running package livebuild_pre_run hook"
-	chroot $BUILD_ROOT su -c \
-        "export RECIPEFILE=${RECIPEFILE}; /.build.livebuild_pre_run" \
-        - root < /dev/null || cleanup_and_exit 1
-    fi
-
-    chroot $BUILD_ROOT su -c "cd $TOPDIR/$LIVEBUILD_ROOT && lb build" - root \
-	< /dev/null || cleanup_and_exit 1
+    chroot $BUILD_ROOT su -c "cd $TOPDIR/SOURCES && snapcraft build" - root \
+	|| cleanup_and_exit 1
+    chroot $BUILD_ROOT su -c "cd $TOPDIR/SOURCES && snapcraft snap" - root \
+	|| cleanup_and_exit 1
 
     # extract build result basenames
     local build_results=""
-    for i in $BUILD_ROOT/$TOPDIR/$LIVEBUILD_ROOT/* ; do
+    for i in $BUILD_ROOT/$TOPDIR/SOURCES/* ; do
 	test -f "$i" || continue
 	case "${i##*/}" in
-	    *.hybrid.iso)
-		build_results="${build_results}\n${i%%.hybrid.iso}"
-		;;
-	    *.iso)
-		build_results="${build_results}\n${i%%.iso}"
-		;;
-	    *.img)
-		build_results="${build_results}\n${i%%.img}"
-		;;
-	    *.netboot.tar*)
-		build_results="${build_results}\n${i%%.netboot.tar*}"
-		;;
-	    *.tar*)
-		build_results="${build_results}\n${i%%.tar*}"
+	    *.snap)
+		build_results="${build_results}\n${i%%.snap}"
 		;;
 	    *)
 		;;
@@ -241,7 +163,7 @@ recipe_build_livebuild() {
     done
 }
 
-recipe_resultdirs_livebuild() {
+recipe_resultdirs_snapcraft() {
     # our results are already in OTHER
     :
 }

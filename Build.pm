@@ -24,6 +24,7 @@ use strict;
 use Digest::MD5;
 use Build::Rpm;
 use Data::Dumper;
+use POSIX qw(strftime);
 
 our $expand_dbg;
 
@@ -31,7 +32,9 @@ our $do_rpm;
 our $do_deb;
 our $do_kiwi;
 our $do_arch;
+our $do_collax;
 our $do_livebuild;
+our $do_snapcraft;
 
 sub import {
   for (@_) {
@@ -39,9 +42,11 @@ sub import {
     $do_deb = 1 if $_ eq ':deb';
     $do_kiwi = 1 if $_ eq ':kiwi';
     $do_arch = 1 if $_ eq ':arch';
+    $do_collax = 1 if $_ eq ':collax';
     $do_livebuild = 1 if $_ eq ':livebuild';
+    $do_snapcraft = 1 if $_ eq ':snapcraft';
   }
-  $do_rpm = $do_deb = $do_kiwi = $do_arch = $do_livebuild = 1 if !$do_rpm && !$do_deb && !$do_kiwi && !$do_arch && !$do_livebuild;
+  $do_rpm = $do_deb = $do_kiwi = $do_arch = $do_collax = $do_livebuild = $do_snapcraft = 1 if !$do_rpm && !$do_deb && !$do_kiwi && !$do_arch && !$do_collax && !$do_livebuild && !$do_snapcraft;
   if ($do_deb) {
     require Build::Deb;
   }
@@ -51,8 +56,14 @@ sub import {
   if ($do_arch) {
     require Build::Arch;
   }
+  if ($do_collax) {
+    require Build::Collax;
+  }
   if ($do_livebuild) {
     require Build::LiveBuild;
+  }
+  if ($do_snapcraft) {
+    require Build::Snapcraft;
   }
 }
 
@@ -137,7 +148,7 @@ sub dist_canon($$) {
   } elsif ($rpmdist =~ /suse linux (\d+)\.(\d+)\.[4-9]\d/) {
     # alpha version
     $dist = "$1.".($2 + 1)."-$rpmdista";
-  } elsif ($rpmdist =~ /suse linux (\d+\.\d+)/) {
+  } elsif ($rpmdist =~ /suse linux (?:leap )?(\d+\.\d+)/) {
     $dist = "$1-$rpmdista";
   }
   return $dist;
@@ -174,8 +185,8 @@ sub read_config_dist {
 }
 
 sub get_hostarch {
-	my $hostarch = `uname -m` || 'i586';
-	return $hostarch;
+       my $hostarch = `uname -m` || 'i586';
+       return $hostarch;
 }
 
 sub read_config {
@@ -237,6 +248,7 @@ sub read_config {
   $config->{'constraint'} = [];
   $config->{'expandflags'} = [];
   $config->{'buildflags'} = [];
+  $config->{'singleexport'} = '';
   for my $l (@spec) {
     $l = $l->[1] if ref $l;
     next unless defined $l;
@@ -334,10 +346,12 @@ sub read_config {
       } else {
 	push @{$config->{'constraint'}}, $l;
       }
-    } elsif ($l0 eq 'rpmbuildstage:') { # use the rpmbuild --stage option
-      $config->{'rpmbuildstage'} = $l[0];
-    } elsif ($l0 eq 'copylinkedpackages:') { # to enable the RPM compariton tool for prerelease projects
-      # Since it is not used in build package, do nothing.
+	} elsif ($l0 eq 'rpmbuildstage:') { # use the rpmbuild --stage option
+	  $config->{'rpmbuildstage'} = $l[0];
+	} elsif ($l0 eq 'rpmbuildstage:') { # use the rpmbuild --stage option
+	  $config->{'rpmbuildstage'} = $l[0];
+    } elsif ($l0 eq 'singleexport:') {
+      $config->{'singleexport'} = $l[0]; # avoid to export multiple package container in maintenance_release projects
     } elsif ($l0 !~ /^[#%]/) {
       warn("unknown keyword in config: $l0\n");
     }
@@ -365,7 +379,7 @@ sub read_config {
   }
   if (!$config->{'binarytype'}) {
     $config->{'binarytype'} = 'rpm' if $config->{'type'} eq 'spec' || $config->{'type'} eq 'kiwi';
-    $config->{'binarytype'} = 'deb' if $config->{'type'} eq 'dsc' || $config->{'type'} eq 'livebuild';
+    $config->{'binarytype'} = 'deb' if $config->{'type'} eq 'dsc' || $config->{'type'} eq 'collax' || $config->{'type'} eq 'livebuild';
     $config->{'binarytype'} = 'arch' if $config->{'type'} eq 'arch';
     $config->{'binarytype'} ||= 'UNDEFINED';
   }
@@ -442,28 +456,72 @@ sub do_subst_vers {
   return @res;
 }
 
-sub add_livebuild_packages {
-  my ($config, @deps) = @_;
+my %subst_defaults = (
+  # defaults live-build package dependencies base on 4.0~a26 gathered with:
+  # grep Check_package -r /usr/lib/live/build
+  'build-packages:livebuild' => [
+    'apt-utils', 'dctrl-tools', 'debconf', 'dosfstools', 'e2fsprogs', 'grub',
+    'librsvg2-bin', 'live-boot', 'live-config', 'mtd-tools', 'parted',
+    'squashfs-tools', 'syslinux', 'syslinux-common', 'wget', 'xorriso', 'zsync',
+  ],
+  'system-packages:livebuild' => [
+    'apt-utils', 'cpio', 'dpkg-dev', 'live-build', 'lsb-release', 'tar',
+  ],
+  'system-packages:mock' => [
+    'mock', 'createrepo',
+  ],
+  'system-packages:debootstrap' => [
+    'debootstrap', 'lsb-release',
+  ],
+  'system-packages:kiwi-image' => [
+    'kiwi', 'createrepo', 'tar',
+  ],
+  'system-packages:kiwi-product' => [
+    'kiwi',
+  ],
+  'system-packages:deltarpm' => [
+    'deltarpm',
+  ],
+);
 
-  if ($config->{'substitute'}->{'build-packages:livebuild'}) {
-    push @deps, @{$config->{'substitute'}->{'build-packages:livebuild'}};
-  } else {
-    # defaults live-build package dependencies base on 4.0~a26 gathered with:
-    # grep Check_package -r /usr/lib/live/build
-    push @deps, (
-      'apt-utils', 'dctrl-tools', 'debconf', 'dosfstools', 'e2fsprogs', 'grub',
-      'librsvg2-bin', 'live-boot', 'live-config', 'mtd-tools', 'parted',
-      'squashfs-tools', 'syslinux', 'syslinux-common', 'wget', 'xorriso',
-      'zsync' );
+# expand the preinstalls/vminstalls
+sub expandpreinstalls {
+  my ($config) = @_;
+  return if !$config->{'expandflags:preinstallexpand'} || $config->{'preinstallisexpanded'};
+  my (@pre, @vm);
+  if (@{$config->{'preinstall'} || []}) {
+    @pre = expand($config, @{$config->{'preinstall'} || []});
+    return "preinstalls: $pre[0]" unless shift @pre;
+    @pre = sort(@pre);
   }
-  return @deps;
+  if (@{$config->{'vminstall'} || []}) {
+    my %pre = map {$_ => 1} @pre;
+    my %vmx = map {+"-$_" => 1} @{$config->{'vminstall'} || []};
+    my @pren = grep {/^-/ && !$vmx{$_}} @{$config->{'preinstall'} || []};
+    @vm = expand($config, @pre, @pren, @{$config->{'vminstall'} || []});
+    return "vminstalls: $vm[0]" unless shift @vm;
+    @vm = sort(grep {!$pre{$_}} @vm);
+  }
+  $config->{'preinstall'} = \@pre;
+  $config->{'vminstall'} = \@vm;
+  #print STDERR "pre: @pre\n";
+  #print STDERR "vm: @vm\n";
+  $config->{'preinstallisexpanded'} = 1;
+  return '';
 }
 
 # Delivers all packages which get used for building
 sub get_build {
   my ($config, $subpacks, @deps) = @_;
 
-  @deps = add_livebuild_packages($config, @deps) if $config->{'type'} eq 'livebuild';
+  if ($config->{'expandflags:preinstallexpand'} && !$config->{'preinstallisexpanded'}) {
+    my $err = expandpreinstalls($config);
+    return (undef, $err) if $err;
+  }
+  if ($config->{'type'} eq 'livebuild') {
+    push @deps, @{$config->{'substitute'}->{'build-packages:livebuild'}
+		  || $subst_defaults{'build-packages:livebuild'} || []};
+  }
   my @ndeps = grep {/^-/} @deps;
   my %ndeps = map {$_ => 1} @ndeps;
   my @directdepsend;
@@ -507,23 +565,48 @@ sub get_build {
 # an empty result means that the packages from get_build should
 # be used instead.
 sub get_sysbuild {
-  my ($config, $buildtype) = @_;
+  my ($config, $buildtype, $extradeps) = @_;
   my $engine = $config->{'buildengine'} || '';
   $buildtype ||= $config->{'type'} || '';
   my @sysdeps;
-  if ($engine eq 'mock' && $buildtype ne 'kiwi') {
+  if ($engine eq 'mock' && $buildtype eq 'spec') {
     @sysdeps = @{$config->{'substitute'}->{'system-packages:mock'} || []};
-    @sysdeps = ('mock', 'createrepo') unless @sysdeps;
-  } elsif ($engine eq 'debootstrap' && $buildtype ne 'kiwi') {
+    @sysdeps = @{$subst_defaults{'system-packages:mock'} || []} unless @sysdeps;
+  } elsif ($engine eq 'debootstrap' && $buildtype eq 'dsc') {
     @sysdeps = @{$config->{'substitute'}->{'system-packages:debootstrap'} || []};
-    @sysdeps = ('debootstrap', 'lsb-release') unless @sysdeps;
+    @sysdeps = @{$subst_defaults{'system-packages:debootstrap'} || []} unless @sysdeps;
   } elsif ($buildtype eq 'livebuild') {
     # packages used for build environment setup (build-recipe-livebuild deps)
     @sysdeps = @{$config->{'substitute'}->{'system-packages:livebuild'} || []};
-    @sysdeps = ('apt-utils', 'cpio', 'dpkg-dev', 'live-build', 'lsb-release', 'tar') unless @sysdeps;
+    @sysdeps = @{$subst_defaults{'system-packages:livebuild'} || []} unless @sysdeps;
+  } elsif ($buildtype eq 'kiwi-image') {
+    @sysdeps = @{$config->{'substitute'}->{'system-packages:kiwi-image'} || []};
+    @sysdeps = @{$config->{'substitute'}->{'kiwi-setup:image'} || []} unless @sysdeps;
+    @sysdeps = @{$subst_defaults{'system-packages:kiwi-image'} || []} unless @sysdeps;
+    push @sysdeps, @$extradeps if $extradeps;
+  } elsif ($buildtype eq 'kiwi-product') {
+    @sysdeps = @{$config->{'substitute'}->{'system-packages:kiwi-product'} || []};
+    @sysdeps = @{$config->{'substitute'}->{'kiwi-setup:product'} || []} unless @sysdeps;
+    @sysdeps = @{$subst_defaults{'system-packages:kiwi-product'} || []} unless @sysdeps;
+    push @sysdeps, @$extradeps if $extradeps;
+  } elsif ($buildtype eq 'deltarpm') {
+    @sysdeps = @{$config->{'substitute'}->{'system-packages:deltarpm'} || []};
+    @sysdeps = @{$subst_defaults{'system-packages:deltarpm'} || []} unless @sysdeps;
   }
   return () unless @sysdeps;
-  @sysdeps = Build::get_build($config, [], @sysdeps);
+  if ($config->{'expandflags:preinstallexpand'} && !$config->{'preinstallisexpanded'}) {
+    my $err = expandpreinstalls($config);
+    return (undef, $err) if $err;
+  }
+  my @ndeps = grep {/^-/} @sysdeps;
+  my %ndeps = map {$_ => 1} @ndeps;
+  @sysdeps = grep {!$ndeps{$_}} @sysdeps;
+  push @sysdeps, @{$config->{'preinstall'}}, @{$config->{'required'}};
+  push @sysdeps, @{$config->{'support'}} if $buildtype eq 'kiwi-image' || $buildtype eq 'kiwi-product';	# compat to old versions
+  @sysdeps = do_subst($config, @sysdeps);
+  @sysdeps = grep {!$ndeps{$_}} @sysdeps;
+  my $configtmp = $config;
+  @sysdeps = expand($configtmp, @sysdeps, @ndeps);
   return @sysdeps unless $sysdeps[0];
   shift @sysdeps;
   @sysdeps = unify(@sysdeps, get_preinstalls($config));
@@ -533,6 +616,10 @@ sub get_sysbuild {
 # Delivers all packages which shall have an influence to other package builds (get_build reduced by support packages)
 sub get_deps {
   my ($config, $subpacks, @deps) = @_;
+  if ($config->{'expandflags:preinstallexpand'} && !$config->{'preinstallisexpanded'}) {
+    my $err = expandpreinstalls($config);
+    return (undef, $err) if $err;
+  }
   my @ndeps = grep {/^-/} @deps;
   my @extra = @{$config->{'required'}};
   if (@{$config->{'keep'} || []}) {
@@ -564,11 +651,19 @@ sub get_deps {
 
 sub get_preinstalls {
   my ($config) = @_;
+  if ($config->{'expandflags:preinstallexpand'} && !$config->{'preinstallisexpanded'}) {
+    my $err = expandpreinstalls($config);
+    return ('expandpreinstalls_error') if $err;
+  }
   return @{$config->{'preinstall'}};
 }
 
 sub get_vminstalls {
   my ($config) = @_;
+  if ($config->{'expandflags:preinstallexpand'} && !$config->{'preinstallisexpanded'}) {
+    my $err = expandpreinstalls($config);
+    return ('expandpreinstalls_error') if $err;
+  }
   return @{$config->{'vminstall'}};
 }
 
@@ -578,8 +673,8 @@ sub get_runscripts {
 }
 
 ### just for API compability
-sub get_cbpreinstalls { return @{[]}; }
-sub get_cbinstalls { return @{[]}; }
+sub get_cbpreinstalls { return (); }
+sub get_cbinstalls { return (); }
 
 ###########################################################################
 
@@ -670,17 +765,17 @@ sub readdeps {
 	  $pkginfo->{$pkgid}->{'obsoletes'} = \@ss if $pkginfo;
 	  next;
 	}
-	if ($1 eq "r") {
-	  $recommends{$pkgid} = \@ss;
-	  $pkginfo->{$pkgid}->{'recommends'} = \@ss if $pkginfo;
-	  next;
-	}
-	if ($1 eq "s") {
-	  $supplements{$pkgid} = \@ss;
-	  $pkginfo->{$pkgid}->{'supplements'} = \@ss if $pkginfo;
-	  next;
-	}
-      }
+     if ($1 eq "r") {
+       $recommends{$pkgid} = \@ss;
+       $pkginfo->{$pkgid}->{'recommends'} = \@ss if $pkginfo;
+       next;
+       }
+	  if ($1 eq "s") {
+	    $supplements{$pkgid} = \@ss;
+	    $pkginfo->{$pkgid}->{'supplements'} = \@ss if $pkginfo;
+	    next;
+	  }
+     }
     }
     close F;
   }
@@ -787,6 +882,7 @@ sub addproviders {
   my @p;
   my $whatprovides = $config->{'whatprovidesh'};
   $whatprovides->{$r} = \@p;
+  my $binarytype = $config->{'binarytype'};
   if ($r =~ /\|/) {
     for my $or (split(/\s*\|\s*/, $r)) {
       push @p, @{$whatprovides->{$or} || addproviders($config, $or)};
@@ -794,19 +890,22 @@ sub addproviders {
     @p = unify(@p) if @p > 1;
     return \@p;
   }
-  return \@p if $r !~ /^(.*?)\s*([<=>]{1,2})\s*(.*?)$/;
+  if ($r !~ /^(.*?)\s*([<=>]{1,2})\s*(.*?)$/) {
+    @p = @{$whatprovides->{$r} || addproviders($config, $r)} if $binarytype eq 'deb' && $r =~ s/:any$//;
+    return \@p;
+  }
   my $rn = $1;
   my $rv = $3;
   my $rf = $addproviders_fm{$2};
   return \@p unless $rf;
+  $rn =~ s/:any$// if $binarytype eq 'deb';
   my $provides = $config->{'providesh'};
   my @rp = @{$whatprovides->{$rn} || []};
   for my $rp (@rp) {
     for my $pp (@{$provides->{$rp} || []}) {
       if ($pp eq $rn) {
 	# debian: unversioned provides do not match
-	# kiwi: supports only rpm, so we need to hand it like it
-	next if $config->{'binarytype'} eq 'deb';
+	next if $binarytype eq 'deb';
 	push @p, $rp;
 	last;
       }
@@ -827,7 +926,7 @@ sub addproviders {
       $rr &= 5 unless $pf & 2;
       # verscmp for spec and kiwi types
       my $vv;
-      if ($config->{'binarytype'} eq 'deb') {
+      if ($binarytype eq 'deb') {
 	$vv = Build::Deb::verscmp($pv, $rv, 1);
       } else {
 	$vv = Build::Rpm::verscmp($pv, $rv, 1);
@@ -901,6 +1000,7 @@ sub expand {
   my $requires = $config->{'requiresh'};
 
   my %xignore = map {substr($_, 1) => 1} grep {/^-/} @p;
+  $ignore = {} if $xignore{'-ignoreignore--'};
   my @directdepsend;
   if ($xignore{'-directdepsend--'}) {
     delete $xignore{'-directdepsend--'};
@@ -912,7 +1012,6 @@ sub expand {
     @directdepsend = grep {!/^-/} splice(@directdepsend, @p + 1);
   }
   @p = grep {!/^-/} @p;
-
   my %aconflicts;	# packages we are conflicting with
   for (grep {/^!/} @p) {
     my $r = /^!!/ ? substr($_, 2) : substr($_, 1);
@@ -920,8 +1019,6 @@ sub expand {
     @q = nevrmatch($config, $r, @q) if /^!!/;
     $aconflicts{$_} = "is in BuildConflicts" for @q;
   }
-  my %recommended;	# recommended by installed packages
-  my @rec_todo;		# installed todo
 
   @p = grep {!/^[-!]/} @p;
   my %p;		# expanded packages
@@ -940,6 +1037,7 @@ sub expand {
       push @p, $p;
       next;
     }
+    next if $p{$q[0]};
     return (undef, "$q[0] $aconflicts{$q[0]}") if $aconflicts{$q[0]};
     print "added $q[0] because of $p (direct dep)\n" if $expand_dbg;
     push @p, $q[0];
@@ -953,7 +1051,7 @@ sub expand {
 	$aconflicts{$_} = "is obsoleted by installed $q[0]" for nevrmatch($config, $r, @{$whatprovides->{$r} || addproviders($config, $r)});
       }
     }
-    push @rec_todo, $q[0] if $userecommendsforchoices;
+	push @rec_todo, $q[0] if $userecommendsforchoices;
   }
   push @p, @directdepsend;
 
@@ -965,12 +1063,16 @@ sub expand {
     for my $p (splice @p) {
       for my $r (@{$requires->{$p} || [$p]}) {
 	my $ri = (split(/[ <=>]/, $r, 2))[0];
-	next if $ignore->{"$p:$ri"} || $xignore{"$p:$ri"};
-	next if $ignore->{$ri} || $xignore{$ri};
+	if (!$ignoreignore) {
+	  next if $ignore->{"$p:$ri"} || $xignore{"$p:$ri"};
+	  next if $ignore->{$ri} || $xignore{$ri};
+	}
 	my @q = @{$whatprovides->{$r} || addproviders($config, $r)};
 	next if grep {$p{$_}} @q;
-	next if grep {$xignore{$_}} @q;
-	next if grep {$ignore->{"$p:$_"} || $xignore{"$p:$_"}} @q;
+	if (!$ignoreignore) {
+	  next if grep {$xignore{$_}} @q;
+	  next if grep {$ignore->{"$p:$_"} || $xignore{"$p:$_"}} @q;
+	}
 	my @eq = map {"provider $_ $aconflicts{$_}"} grep {$aconflicts{$_}} @q;
 	@q = grep {!$aconflicts{$_}} @q;
 	if (!$ignoreconflicts) {
@@ -1024,7 +1126,7 @@ sub expand {
 	  my @pq = grep {$recommended{$_}} @q;
 	  print "recommended [@pq] among [@q]\n" if $expand_dbg;
 	  @q = @pq if @pq;
-	}
+	  }
 	if (@q > 1) {
 	  if ($r ne $p) {
 	    push @error, "have choice for $r needed by $p: @q";
@@ -1058,9 +1160,9 @@ sub expand {
     if (@pamb && ($doamb == 0 || $doamb == 1)) {
       @p = @pamb;
       @pamb = ();
-      todo2recommended($config, \%recommended, \@rec_todo) if @rec_todo;
-      $doamb = %recommended ? 2 : 3;
-      print "now doing undecided dependencies, $doamb = $doamb\n" if $expand_dbg;
+	  todo2recommended($config, \%recommended, \@rec_todo) if @rec_todo;
+	  $doamb = %recommended ? 2 : 3;
+	  print "now doing undecided dependencies, $doamb = $doamb\n" if $expand_dbg;
       next;
     }
     return undef, @error if @error;
@@ -1186,11 +1288,15 @@ sub add_all_providers {
 
 sub recipe2buildtype {
   my ($recipe) = @_;
+  return undef unless defined $recipe;
   return $1 if $recipe =~ /\.(spec|dsc|kiwi|livebuild)$/;
   $recipe =~ s/.*\///;
   $recipe =~ s/^_service:.*://;
   return 'arch' if $recipe eq 'PKGBUILD';
+  return 'collax' if $recipe eq 'build.collax';
+  return 'snapcraft' if $recipe eq 'snapcraft.yaml';
   return 'preinstallimage' if $recipe eq '_preinstallimage';
+  return 'simpleimage' if $recipe eq 'simpleimage';
   return undef;
 }
 
@@ -1201,6 +1307,7 @@ sub show {
   my $d = Build::parse($cf, $fn);
   die("$d->{'error'}\n") if $d->{'error'};
   $d->{'sources'} = [ map {ref($d->{$_}) ? @{$d->{$_}} : $d->{$_}} grep {/^source/} sort keys %$d ];
+  $d->{'patches'} = [ map {ref($d->{$_}) ? @{$d->{$_}} : $d->{$_}} grep {/^patch/} sort keys %$d ];
   my $x = $d->{$field};
   $x = [ $x ] unless ref $x;
   print "$_\n" for @$x;
@@ -1210,6 +1317,17 @@ sub parse_preinstallimage {
   return undef unless $do_rpm;
   my $d = Build::Rpm::parse(@_);
   $d->{'name'} ||= 'preinstallimage';
+  return $d;
+}
+
+sub parse_simpleimage {
+  return undef unless $do_rpm;
+  my $d = Build::Rpm::parse(@_);
+  $d->{'name'} ||= 'simpleimage';
+  if (!defined($d->{'version'})) {
+    my @s = stat($_[1]);
+    $d->{'version'} = strftime "%Y.%m.%d-%H.%M.%S", gmtime($s[9] || time);
+  }
   return $d;
 }
 
@@ -1224,7 +1342,10 @@ sub parse {
   $fnx =~ s/.*\///;
   $fnx =~ s/^[0-9a-f]{32,}-//;	# hack for OBS srcrep implementation
   $fnx =~ s/^_service:.*://;
+  return parse_simpleimage($cf, $fn, @args) if $fnx eq 'simpleimage';
+  return Build::Snapcraft::parse($cf, $fn, @args) if $do_snapcraft && $fnx eq 'snapcraft.yaml';
   return Build::Arch::parse($cf, $fn, @args) if $do_arch && $fnx eq 'PKGBUILD';
+  return Build::Collax::parse($cf, $fn, @args) if $do_collax && $fnx eq 'build.collax';
   return parse_preinstallimage($cf, $fn, @args) if $fnx eq '_preinstallimage';
   return undef;
 }
@@ -1236,7 +1357,10 @@ sub parse_typed {
   return Build::Deb::parse($cf, $fn, @args) if $do_deb && $buildtype eq 'dsc';
   return Build::Kiwi::parse($cf, $fn, @args) if $do_kiwi && $buildtype eq 'kiwi';
   return Build::LiveBuild::parse($cf, $fn, @args) if $do_livebuild && $buildtype eq 'livebuild';
+  return Build::Snapcraft::parse($cf, $fn, @args) if $do_snapcraft && $buildtype eq 'snapcraft';
+  return parse_simpleimage($cf, $fn, @args) if $buildtype eq 'simpleimage';
   return Build::Arch::parse($cf, $fn, @args) if $do_arch && $buildtype eq 'arch';
+  return Build::Collax::parse($cf, $fn, @args) if $do_collax && $buildtype eq 'collax';
   return parse_preinstallimage($cf, $fn, @args) if $buildtype eq 'preinstallimage';
   return undef;
 }
@@ -1248,7 +1372,7 @@ sub query {
     $handle = $binname->[1];
     $binname = $binname->[0];
   }
-  return Build::Rpm::query($handle, %opts) if $do_rpm && $binname =~ /\.rpm$/;
+  return Build::Rpm::query($handle, %opts) if $do_rpm && $binname =~ /\.d?rpm$/;
   return Build::Deb::query($handle, %opts) if $do_deb && $binname =~ /\.deb$/;
   return Build::Kiwi::queryiso($handle, %opts) if $do_kiwi && $binname =~ /\.iso$/;
   return Build::Arch::query($handle, %opts) if $do_arch && $binname =~ /\.pkg\.tar(?:\.gz|\.xz)?$/;
@@ -1276,7 +1400,7 @@ sub showquery {
 
 sub queryhdrmd5 {
   my ($binname) = @_;
-  return Build::Rpm::queryhdrmd5(@_) if $do_rpm && $binname =~ /\.rpm$/;
+  return Build::Rpm::queryhdrmd5(@_) if $do_rpm && $binname =~ /\.d?rpm$/;
   return Build::Deb::queryhdrmd5(@_) if $do_deb && $binname =~ /\.deb$/;
   return Build::Kiwi::queryhdrmd5(@_) if $do_kiwi && $binname =~ /\.iso$/;
   return Build::Kiwi::queryhdrmd5(@_) if $do_kiwi && $binname =~ /\.raw$/;

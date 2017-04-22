@@ -61,8 +61,13 @@ if ($type eq 'buildflags') {
   die("Specify which buildflag to query\n") unless $argument;
   my $result = $cf->{"buildflags:$argument"};
   print "$result\n" if defined $result;
+} elsif ($type eq 'hostarch') {
+  my $result = $cf->{"hostarch"};
+  print "$result\n" if defined $result;
 } elsif ($type eq 'target' || $type eq 'type' || $type eq 'binarytype' || $type eq 'buildengine' || $type eq 'rawmacros') {
   print "$cf->{$type}\n" if $cf->{$type};
+} elsif ($type eq 'repotype') {
+  print join(' ', @{$cf->{$type}})."\n" if $cf->{$type};
 } elsif ($type eq 'optflags') {
   exit(0) unless $cf->{'optflags'};
   my $all = $cf->{'optflags'}->{'*'};

@@ -44,6 +44,7 @@ install:
 	    substitutedeps \
 	    debtransform \
 	    debtransformbz2 \
+	    debtransformxz \
 	    debtransformzip \
 	    mkbaselibs \
 	    mkdrpms \
@@ -56,10 +57,12 @@ install:
 	    changelog2spec \
 	    spec2changelog \
 	    download \
+	    runservices \
 	    spec_add_patch \
 	    spectool \
 	    signdummy \
 	    unrpm \
+	    telnet_login_wrapper \
 	    $(DESTDIR)$(pkglibdir)
 	install -m755 emulator/emulator.sh $(DESTDIR)$(pkglibdir)/emulator/
 	install -m644 Build/*.pm $(DESTDIR)$(pkglibdir)/Build

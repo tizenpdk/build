@@ -45,6 +45,11 @@ VM_INITRD=
 VM_WORKER=
 VM_SERVER=
 VM_MEMSIZE=
+VM_NETOPT=()
+VM_NETDEVOPT=()
+VM_DEVICEOPT=()
+VM_TELNET=
+VM_CONSOLE_INPUT=
 VMDISK_ROOTSIZE=4096
 VMDISK_SWAPSIZE=1024
 VMDISK_FILESYSTEM=
@@ -60,7 +65,7 @@ HUGETLBFSPATH=
 # emulator specific?
 EMULATOR_SCRIPT=
 
-for i in ec2 emulator kvm lxc openstack qemu uml xen zvm ; do
+for i in ec2 emulator kvm lxc openstack qemu uml xen zvm docker pvm; do
     . "$BUILD_DIR/build-vm-$i"
 done
 
@@ -132,8 +137,8 @@ vm_parse_options() {
 	needarg
 	VM_TYPE="$ARG"
 	case "$VM_TYPE" in
-	    lxc) ;;
-	    ec2|xen|kvm|uml|qemu|emulator|openstack|zvm)
+	    lxc|docker) ;;
+	    ec2|xen|kvm|uml|qemu|emulator|openstack|zvm|pvm)
 		test -z "$VM_IMAGE" && VM_IMAGE=1
 	    ;;
 	    none|chroot) VM_TYPE= ;;
@@ -227,6 +232,34 @@ vm_parse_options() {
       -vm-watchdog)
 	VM_WATCHDOG=true
       ;;
+      -vm-user)
+        needarg
+        VM_USER="$ARG"
+        shift
+      ;;
+      -vm-enable-console)
+        VM_CONSOLE_INPUT=true
+      ;;
+      -vm-telnet)
+        needarg
+        VM_TELNET="$ARG"
+        shift
+      ;;
+      -vm-net)
+        needarg
+        VM_NETOPT=("${VM_NETOPT[@]}" "$ARG")
+        shift
+      ;;
+      -vm-netdev)
+        needarg
+        VM_NETDEVOPT=("${VM_NETDEVOPT[@]}" "$ARG")
+        shift
+      ;;
+      -vm-device)
+        needarg
+        VM_DEVICEOPT=("${VM_DEVICEOPT[@]}" "$ARG")
+        shift
+      ;;
       -*)
 	return 1
       ;;
@@ -249,7 +282,7 @@ vm_shutdown() {
     fi
     exec >&0 2>&0	# so that the logging tee finishes
     sleep 1		# wait till tee terminates
-    test "$VM_TYPE" = lxc && exit $1
+    test "$VM_TYPE" = lxc -o "$VM_TYPE" = docker && exit $1
     kill -9 -1        # goodbye cruel world
     if ! test -x /sbin/halt ; then
 	test -e /proc/sysrq-trigger || mount -n -tproc none /proc
@@ -273,18 +306,31 @@ vm_img_create() {
     local img="$1"
     local size="$2"
 
-    echo "Creating $img (${size}M)"
-    mkdir -p "${img%/*}" || cleanup_and_exit 3
-
-    # prefer fallocate, which avoids fragmentation
-    r=1
-    if type -p fallocate > /dev/null ; then
-        fallocate -l "${size}M" "$img"
-        r=$?
+    if test -e "${img}" ; then
+	local origsize=$(cat "${img}.size" 2> /dev/null)
+	if test -z "$origsize" -o "$origsize" != "$size" ; then
+	    echo "Resizing $img (${size}M)"
+	fi
+    else
+	echo "Creating $img (${size}M)"
+	rm -f "${img}.size"
     fi
-    # fall back to dd method if fallocate is not supported
-    if test "$r" -gt 0 ; then
-        dd if=/dev/zero of="$img" bs=1M count=0 seek="$size" || cleanup_and_exit 3
+
+    mkdir -p "${img%/*}" || cleanup_and_exit 3
+    # truncate file to the desired size
+    dd if=/dev/zero of="$img" bs=1M count=0 seek="$size" || cleanup_and_exit 3
+    echo "$size" > "${img}.size"
+    # allocate blocks
+    if type -p fallocate > /dev/null ; then
+        fallocate -p -l "${size}M" "$img" 2> /dev/null
+        errout=$( fallocate -l "${size}M" "$img" 2>&1 )
+        if test $? != 0; then
+            echo $errout
+            if test "${errout/Operation not supported/}" = "$errout"; then
+                # Do not fail on not support file systems, eg ext2 or ext3
+                cleanup_and_exit 3
+            fi
+        fi
     fi
 }
 
@@ -432,14 +478,17 @@ vm_detect_2nd_stage() {
     fi
     RUNNING_IN_VM=true
     test -e /proc/version || mount -orw -n -tproc none /proc
-    if test "$VM_TYPE" != lxc ; then
+    if test "$VM_TYPE" != lxc -a "$VM_TYPE" != docker ; then
 	mount -n ${VMDISK_MOUNT_OPTIONS},remount,rw /
     fi
     umount /run >/dev/null 2>&1
     # mount /sys
     if ! test -e /sys/block; then
-       mkdir -p /sys
-       mount -orw -n -tsysfs sysfs /sys
+	mkdir -p /sys
+	mount -orw -n -tsysfs sysfs /sys
+        # Docker already has sysfs mounted ro elsewhere,
+        # need to remount rw explicitly.
+        mount -o remount,rw sysfs /sys
     fi
 # qemu inside of xen does not work, check again with kvm later before enabling this
 #    if test -e /dev/kqemu ; then
@@ -468,6 +517,10 @@ vm_detect_2nd_stage() {
 	swapon -v "$VM_SWAP" || exit 1
     fi
     HOST="$MYHOSTNAME"
+
+    # repair dracut damage, see bsc#922676
+    test -L /var/run -a ! -e /var/run && rm -f /var/run
+    test -L /var/lock -a ! -e /var/lock && rm -f /var/lock
 
     # fork a process monitoring max filesystem usage during build
     if test "$DO_STATISTICS" = 1 ; then
@@ -546,13 +599,11 @@ vm_setup() {
 	    rm -rf "$VM_SWAP"
 	fi
     fi
-    if test ! -e "$VM_IMAGE" ; then
-	vm_img_create "$VM_IMAGE" "$VMDISK_ROOTSIZE"
-	if test -z "$CLEAN_BUILD" ; then
-	    vm_img_mkfs "$VMDISK_FILESYSTEM" "$VM_IMAGE"
-	fi
+    test -b "$VM_IMAGE" || vm_img_create "$VM_IMAGE" "$VMDISK_ROOTSIZE"
+    if test -z "$CLEAN_BUILD" ; then
+        vm_img_mkfs "$VMDISK_FILESYSTEM" "$VM_IMAGE"
     fi
-    if test -n "$VM_SWAP" -a ! -e "$VM_SWAP" -a ! -b "$VM_SWAP" ; then
+    if test -n "$VM_SWAP" -a ! -b "$VM_SWAP" ; then
 	vm_img_create "$VM_SWAP" "$VMDISK_SWAPSIZE"
     fi
     if test ! -e "$VM_IMAGE" ; then
@@ -584,6 +635,32 @@ vm_setup() {
 	dd if=/dev/zero of="$VM_SWAP" bs=1024 count=1 conv=notrunc 2>/dev/null
 	vm_detach_swap
         # mkswap happens inside of the vm
+    fi
+}
+
+vm_update_hostarch() {
+    local kernel="$vm_kernel"
+    local hostarchfile
+    local newhostarch
+    if test -z "$VM_KERNEL" -a -e "$BUILD_ROOT/.build.kernel.$VM_TYPE" ; then
+	kernel="$BUILD_ROOT/.build.kernel.$VM_TYPE"
+	hostarchfile="$BUILD_ROOT/.build.hostarch.$VM_TYPE"
+    elif test -n "$kernel" -a -e "$kernel" -a -e "$kernel.hostarch" ; then
+	hostarchfile="$kernel.hostarch"
+    fi
+    if test -n "$hostarchfile" -a -e "$hostarchfile"; then
+	newhostarch=`cat "$hostarchfile"`
+    elif test -n "$kernel" -a -e "$kernel" ; then
+	case `objdump -f "$kernel" | sed -ne 's/.*file format //p'` in
+	    elf64-powerpcle) newhostarch=ppc64le ;;
+	    elf64-powerpc) newhostarch=ppc64 ;;
+	esac
+    fi
+    if test -n "$newhostarch" -a "$newhostarch" != "$BUILD_HOST_ARCH" ; then
+	echo "setting hostarch to $newhostarch"
+	BUILD_HOST_ARCH="$newhostarch"
+	# update BUILD_INITVM_ARCH
+	build_host_arch
     fi
 }
 
@@ -632,6 +709,11 @@ vm_first_stage() {
     # do vm specific fixups
     vm_fixup
 
+    # update the hostarch
+    if test -n "$VM_IMAGE" ; then
+	vm_update_hostarch
+    fi
+
     # the watchdog needs a log file
     test -n "$LOGFILE" || VM_WATCHDOG=
     # put our config into .build/build.data
@@ -659,7 +741,10 @@ vm_first_stage() {
     echo "INCARNATION='${INCARNATION//"'"/$Q}'" >> $BUILD_ROOT/.build/build.data
     echo "DISTURL='${DISTURL//"'"/$Q}'" >> $BUILD_ROOT/.build/build.data
     echo "DO_INIT='${DO_INIT//"'"/$Q}'" >> $BUILD_ROOT/.build/build.data
+    echo "DO_INIT_TOPDIR='${DO_INIT_TOPDIR//"'"/$Q}'" >> $BUILD_ROOT/.build/build.data
     echo "KIWI_PARAMETERS='${KIWI_PARAMETERS//"'"/$Q}'" >> $BUILD_ROOT/.build/build.data
+    echo "VM_TELNET='${VM_TELNET//"'"/$Q}'" >> $BUILD_ROOT/.build/build.data
+    echo "VM_CONSOLE_INPUT='${VM_CONSOLE_INPUT//"'"/$Q}'" >> $BUILD_ROOT/.build/build.data
     test -n "$VM_SWAP" && echo "VM_SWAP='${VM_SWAPDEV//"'"/$Q}'" >> $BUILD_ROOT/.build/build.data
     test -n "$VMDISK_MOUNT_OPTIONS" && echo "VMDISK_MOUNT_OPTIONS='${VMDISK_MOUNT_OPTIONS//"'"/$Q}'" >> $BUILD_ROOT/.build/build.data
     PERSONALITY=0
@@ -667,9 +752,9 @@ vm_first_stage() {
     test "$PERSONALITY" = -1 && PERSONALITY=0	# syscall failed?
     case $(uname -m) in
 	ppc|ppcle|s390) PERSONALITY=8 ;;	# ppc/s390 kernel never tells us if a 32bit personality is active, assume we run on 64bit
-	aarch64) test "$BUILD_ARCH" != "${BUILD_ARCH#armv}" && PERSONALITY=8 ;; # workaround, to be removed
+	aarch64) test "$BUILD_ARCH" != "${BUILD_ARCH#armv[567]}" && PERSONALITY=8 ;; # workaround, to be removed
     esac
-    test "$VM_TYPE" = lxc && PERSONALITY=0
+    test "$VM_TYPE" = lxc -o "$VM_TYPE" = docker && PERSONALITY=0
     echo "PERSONALITY='$PERSONALITY'" >> $BUILD_ROOT/.build/build.data
     echo "MYHOSTNAME='`hostname`'" >> $BUILD_ROOT/.build/build.data
     echo -n "definesnstuff=(" >> $BUILD_ROOT/.build/build.data
@@ -686,14 +771,15 @@ vm_first_stage() {
     echo "BUILDENGINE='$BUILDENGINE'" >> $BUILD_ROOT/.build/build.data
     echo "CCACHE='$CCACHE'" >> $BUILD_ROOT/.build/build.data
     echo "ABUILD_TARGET='$ABUILD_TARGET'" >> $BUILD_ROOT/.build/build.data
-    # use the rpmbuild --stage option
-    if [ ! -z $BUILD_RPM_BUILD_STAGE ]; then
-        if [[ "$BUILD_RPM_BUILD_STAGE" =~ ^- ]]; then
-            echo "BUILD_RPM_BUILD_STAGE='$BUILD_RPM_BUILD_STAGE'" >> $BUILD_ROOT/.build/build.data
-        else
-            echo "BUILD_RPM_BUILD_STAGE='-$BUILD_RPM_BUILD_STAGE'" >> $BUILD_ROOT/.build/build.data
-        fi
-    fi
+	# use the rpmbuild --stage option
+     if [ ! -z $BUILD_RPM_BUILD_STAGE ]; then
+		if [[ "$BUILD_RPM_BUILD_STAGE" =~ ^- ]]; then
+			echo "BUILD_RPM_BUILD_STAGE='$BUILD_RPM_BUILD_STAGE'" >> $BUILD_ROOT/.build/build.data
+		else
+			echo "BUILD_RPM_BUILD_STAGE='-$BUILD_RPM_BUILD_STAGE'" >> $BUILD_ROOT/.build/build.data
+		fi
+	fi
+
     # fallback time for broken hosts
     date '+@%s' > $BUILD_ROOT/.build/.date
     # we're done with the root file system, unmount

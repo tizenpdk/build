@@ -22,14 +22,14 @@ License:        GPL-2.0+ and GPL-2.0
 Epoch:          1
 Group:          Development/Tools/Building
 %if 0%{?suse_version} >= 1230
-Version:        20150115 
+Version:        20160629 
 %else
-Version:        20150115
+Version:        20160629
 %else
 %endif
 Release:        3.1
 #!BuildIgnore:  build-mkbaselibs
-Source:         obs-build-2015.01.15.tar.gz
+Source:         obs-build-2016.06.29.tar.gz
 
 BuildRoot:      %{_tmppath}/%{name}-%{version}-build
 # Manual requires to avoid hard require to bash-static
@@ -129,7 +129,7 @@ This package provides a script for building RPMs for SUSE Linux in a
 chroot or a secure virtualized
 
 %prep
-%setup -q -n obs-build-2015.01.15
+%setup -q -n obs-build-2016.06.29
 
 %build
 # initvm
@@ -194,6 +194,8 @@ test -e default.conf
 /usr/lib/build/initvm.*
 
 %changelog
+* Mon Apr 10 2017 shuai01.fu@samsung.com
+- update tizen version to tizen20170410
 * Wed Apr 5 2017 sk7.park@samsung.com
 - update tizen version to tizen20170405
 * Sat Jan 14 2017 sk7.park@samsung.com
