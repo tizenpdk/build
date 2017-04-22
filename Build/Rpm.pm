@@ -21,6 +21,7 @@
 package Build::Rpm;
 
 our $unfilteredprereqs = 0;
+our $conflictdeps = 0;
 
 use strict;
 
@@ -39,13 +40,13 @@ sub expr {
     return undef unless defined $v;
     return undef unless $expr =~ s/^\)//;
   } elsif ($t eq '!') {
-    ($v, $expr) = expr(substr($expr, 1), 0);
+    ($v, $expr) = expr(substr($expr, 1), 5);
     return undef unless defined $v;
     $v = 0 if $v && $v eq '\"\"';
     $v =~ s/^0+/0/ if $v;
     $v = !$v;
   } elsif ($t eq '-') {
-    ($v, $expr) = expr(substr($expr, 1), 0);
+    ($v, $expr) = expr(substr($expr, 1), 5);
     return undef unless defined $v;
     $v = -$v;
   } elsif ($expr =~ /^([0-9]+)(.*?)$/) {
@@ -60,6 +61,7 @@ sub expr {
   } else {
     return;
   }
+  return ($v, $expr) if $lev >= 5;
   while (1) {
     $expr =~ s/^\s+//;
     if ($expr =~ /^&&/) {
@@ -257,7 +259,7 @@ sub parse {
       next;
     }
     if ($line =~ /^\s*#/) {
-      next unless $line =~ /^#!BuildIgnore/;
+      next unless $line =~ /^#!Build(?:Ignore|Conflicts)\s*:/i;
     }
     my $expandedline = '';
     if (!$skip && ($line =~ /%/)) {
@@ -360,9 +362,9 @@ reexpand:
 	  if (defined($macros_args{$macname})) {
 	    # macro with args!
 	    if (!defined($macdata)) {
-	      $line =~ /^\s*([^\n]*).*?$/;
+	      $line =~ /^\s*([^\n]*).*$/;
 	      $macdata = $1;
-	      $line = $2;
+	      $line = '';
 	    }
 	    push @expandstack, ($expandedline, $line, $optmacros);
 	    $optmacros = adaptmacros(\%macros, $optmacros, grabargs($macname, $macros_args{$macname}, split(' ', $macdata)));
@@ -418,7 +420,7 @@ reexpand:
 
     if ($skip) {
       $xspec->[-1] = [ $xspec->[-1], undef ] if $xspec;
-      $ifdeps = 1 if $line =~ /^(BuildRequires|BuildPrereq|BuildConflicts|\#\!BuildIgnore)\s*:\s*(\S.*)$/i;
+      $ifdeps = 1 if $line =~ /^(BuildRequires|BuildPrereq|BuildConflicts|\#\!BuildIgnore|\#\!BuildConflicts)\s*:\s*(\S.*)$/i;
       next;
     }
 
@@ -436,20 +438,20 @@ reexpand:
       $hasif = 1;
       next;
     }
-    if ($line =~ /^\s*%ifhostarch(.*)$/) {
-      my $hostarch = $macros{'hostarch'} || 'unknown';
-      my @hostarchs = grep {$_ eq $hostarch} split(/\s+/, $1);
-      $skip = 1 if !@hostarchs;
-      $hasif = 1;
-      next;
-    }
-    if ($line =~ /^\s*%ifnhostarch(.*)$/) {
-      my $hostarch = $macros{'hostarch'} || 'unknown';
-      my @hostarchs = grep {$_ eq $hostarch} split(/\s+/, $1);
-      $skip = 1 if @hostarchs;
-      $hasif = 1;
-      next;
-    }
+	if ($line =~ /^\s*%ifhostarch(.*)$/) {
+	  my $hostarch = $macros{'hostarch'} || 'unknown';
+	  my @hostarchs = grep {$_ eq $hostarch} split(/\s+/, $1);
+	  $skip = 1 if !@hostarchs;
+	  $hasif = 1;
+	  next;
+	}
+	if ($line =~ /^\s*%ifnhostarch(.*)$/) {
+	  my $hostarch = $macros{'hostarch'} || 'unknown';
+	  my @hostarchs = grep {$_ eq $hostarch} split(/\s+/, $1);
+	  $skip = 1 if @hostarchs;
+	  $hasif = 1;
+	  next;
+	}
     if ($line =~ /^\s*%ifos(.*)$/) {
       my $os = $macros{'_target_os'} || 'unknown';
       my @oss = grep {$_ eq $os} split(/\s+/, $1);
@@ -502,7 +504,7 @@ reexpand:
       }
       next;
     }
-    if ($preamble && ($line =~ /^(BuildRequires|BuildPrereq|BuildConflicts|\#\!BuildIgnore)\s*:\s*(\S.*)$/i)) {
+    if ($preamble && ($line =~ /^(BuildRequires|BuildPrereq|BuildConflicts|\#\!BuildIgnore|\#\!BuildConflicts)\s*:\s*(\S.*)$/i)) {
       my $what = $1;
       my $deps = $2;
       $ifdeps = 1 if $hasif;
@@ -544,6 +546,10 @@ reexpand:
 
       $replace = 1 if grep {/^-/} @ndeps;
       if (lc($what) ne 'buildrequires' && lc($what) ne 'buildprereq') {
+        if ($conflictdeps && $what =~ /conflict/i) {
+	  push @packdeps, map {"!$_"} @ndeps;
+	  next;
+	}
 	push @packdeps, map {"-$_"} @ndeps;
 	next;
       }
@@ -608,8 +614,10 @@ reexpand:
 ###########################################################################
 
 my %rpmstag = (
-  "SIGTAG_SIZE"    => 1000,     # /*!< internal Header+Payload size in bytes. */
-  "SIGTAG_MD5"     => 1004,     # /*!< internal MD5 signature. */
+  "SIGTAG_SIZE"    => 1000,     # Header+Payload size in bytes. */
+  "SIGTAG_PGP"     => 1002,     # RSA signature over Header+Payload
+  "SIGTAG_MD5"     => 1004,     # MD5 hash over Header+Payload
+  "SIGTAG_GPG"     => 1005,     # DSA signature over Header+Payload
   "NAME"           => 1000,
   "VERSION"        => 1001,
   "RELEASE"        => 1002,
@@ -1076,7 +1084,7 @@ sub queryinstalled {
 
   $root = '' if !defined($root) || $root eq '/';
   local *F;
-  my $dochroot = $root ne '' && !$opts{'nochroot'} && !$< ? 1 : 0;
+  my $dochroot = $root ne '' && !$opts{'nochroot'} && !$< && (-x "$root/usr/bin/rpm" || -x "$root/bin/rpm") ? 1 : 0;
   my $pid = open(F, '-|');
   die("fork: $!\n") unless defined $pid;
   if (!$pid) {
@@ -1113,6 +1121,47 @@ sub queryinstalled {
     die("rpm: exit status $?\n");
   }
   return \@pkgs;
+}
+
+# return (lead, sighdr, hdr [, hdrmd5]) of a rpm
+sub getrpmheaders {
+  my ($path, $withhdrmd5) = @_;
+
+  my $hdrmd5;
+  local *F;
+  open(F, '<', $path) || die("$path: $!\n");
+  my $buf = '';
+  my $l;
+  while (length($buf) < 96 + 16) {
+    $l = sysread(F, $buf, 4096, length($buf));
+    die("$path: read error\n") unless $l;
+  }
+  die("$path: not a rpm\n") unless unpack('N', $buf) == 0xedabeedb && unpack('@78n', $buf) == 5;
+  my ($headmagic, $cnt, $cntdata) = unpack('@96N@104NN', $buf);
+  die("$path: not a rpm (bad sig header)\n") unless $headmagic == 0x8eade801 && $cnt < 16384 && $cntdata < 1048576;
+  my $hlen = 96 + 16 + $cnt * 16 + $cntdata;
+  $hlen = ($hlen + 7) & ~7;
+  while (length($buf) < $hlen + 16) {
+    $l = sysread(F, $buf, 4096, length($buf));
+    die("$path: read error\n") unless $l;
+  }
+  if ($withhdrmd5) {
+    my $idxarea = substr($buf, 96 + 16, $cnt * 16);
+    die("$path: no md5 signature header\n") unless $idxarea =~ /\A(?:.{16})*\000\000\003\354\000\000\000\007(....)\000\000\000\020/s;
+    my $md5off = unpack('N', $1);
+    die("$path: bad md5 offset\n") unless $md5off;
+    $md5off += 96 + 16 + $cnt * 16; 
+    $hdrmd5 = unpack("\@${md5off}H32", $buf);
+  }
+  ($headmagic, $cnt, $cntdata) = unpack('N@8NN', substr($buf, $hlen));
+  die("$path: not a rpm (bad header)\n") unless $headmagic == 0x8eade801 && $cnt < 1048576 && $cntdata < 33554432;
+  my $hlen2 = $hlen + 16 + $cnt * 16 + $cntdata;
+  while (length($buf) < $hlen2) {
+    $l = sysread(F, $buf, 4096, length($buf));
+    die("$path: read error\n") unless $l;
+  }
+  close F;
+  return (substr($buf, 0, 96), substr($buf, 96, $hlen - 96), substr($buf, $hlen, $hlen2 - $hlen), $hdrmd5);
 }
 
 1;

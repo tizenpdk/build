@@ -27,13 +27,10 @@ recipe_setup_spec() {
 	echo "Error: TOPDIR empty"
 	cleanup_and_exit 1
     fi
-    if [ "$NO_TOPDIR_CLEANUP" = false ]; then
-        rm -rf "$BUILD_ROOT$TOPDIR"
-        for i in BUILD RPMS/`uname -m` RPMS/i386 RPMS/noarch SOURCES SPECS SRPMS BUILDROOT OTHER ; do
-            mkdir -p $BUILD_ROOT$TOPDIR/$i
-        done
-    fi
-
+    test "$DO_INIT_TOPDIR" = false || rm -rf "$BUILD_ROOT$TOPDIR"
+    for i in BUILD RPMS/`uname -m` RPMS/i386 RPMS/noarch SOURCES SPECS SRPMS BUILDROOT OTHER ; do
+	mkdir -p $BUILD_ROOT$TOPDIR/$i
+    done
     chown -R "$ABUILD_UID:$ABUILD_GID" "$BUILD_ROOT$TOPDIR"
     mkdir -p $BUILD_ROOT$TOPDIR/SOURCES
     cp -p "$MYSRCDIR"/* $BUILD_ROOT$TOPDIR/SOURCES/
@@ -44,6 +41,9 @@ recipe_prepare_spec() {
     if test -n "$RELEASE"; then
 	args=(--release "$RELEASE")
     fi
+
+    rawcfgmacros=.rpmmacros
+    test "$BUILDTYPE" = debbuild && rawcfgmacros=.debmacros
 
     # fixup specfile
     CHANGELOGARGS=
@@ -56,13 +56,10 @@ recipe_prepare_spec() {
 	mv $BUILD_ROOT/usr/lib/rpm/rpmrc $BUILD_ROOT/usr/lib/rpm/rpmrc_i586
 	sed -e 's/^buildarchtranslate: athlon.*/buildarchtranslate: athlon: i686/' -e 's/^buildarchtranslate: i686.*/buildarchtranslate: i686: i686/' < $BUILD_ROOT/usr/lib/rpm/rpmrc_i586 > $BUILD_ROOT/usr/lib/rpm/rpmrc
     fi
-    if test "$DO_BUILD" = false ; then
-        cleanup_and_exit 0
-    fi
 
     # extract macros from configuration
-    queryconfig rawmacros --dist "$BUILD_DIST" --archpath "$BUILD_ARCH" --configdir "$CONFIG_DIR" > $BUILD_ROOT/root/.rpmmacros
-    if test -n "$BUILD_DEBUG" ; then
+    queryconfig rawmacros --dist "$BUILD_DIST" --archpath "$BUILD_ARCH" --configdir "$CONFIG_DIR" > $BUILD_ROOT/root/$rawcfgmacros
+    if test -n "$BUILD_DEBUG" && test "$BUILDTYPE" != debbuild ; then
 	echo '
 %prep %{?!__debug_package:%{?_build_create_debug:%?_build_insert_debug_package}}%%prep
 %package %{?!__debug_package:%{?_build_create_debug:%?_build_insert_debug_package}}%%package
@@ -71,16 +68,16 @@ recipe_prepare_spec() {
 %undefine _enable_debug_packages \
 %debug_package
 
-' >> $BUILD_ROOT/root/.rpmmacros
+' >> $BUILD_ROOT/root/$rawcfgmacros
     fi
 
     if test -n "$BUILD_JOBS" ; then
-	cat >> $BUILD_ROOT/root/.rpmmacros <<-EOF
+	cat >> $BUILD_ROOT/root/$rawcfgmacros <<-EOF
 		%jobs $BUILD_JOBS
 		%_smp_mflags -j$BUILD_JOBS
 		EOF
     fi
-    test $BUILD_USER = abuild && cp -p $BUILD_ROOT/root/.rpmmacros $BUILD_ROOT/home/abuild/.rpmmacros
+    test $BUILD_USER = abuild && cp -p $BUILD_ROOT/root/$rawcfgmacros $BUILD_ROOT/home/abuild/$rawcfgmacros
 
     # extract optflags from configuration
     queryconfig --dist "$BUILD_DIST" --configdir "$CONFIG_DIR" --archpath "$BUILD_ARCH" optflags ${BUILD_DEBUG:+debug} > $BUILD_ROOT/root/.rpmrc
@@ -112,11 +109,16 @@ recipe_build_spec() {
 
     rpmbuild=rpmbuild
     test -x $BUILD_ROOT/usr/bin/rpmbuild || rpmbuild=rpm
+    test "$BUILDTYPE" = debbuild && rpmbuild=debbuild
 
     # XXX: move _srcdefattr to macro file?
-    rpmbopts=("--define" "_srcdefattr (-,root,root)")
+    rpmbopts=("$BUILD_RPM_BUILD_STAGE" "--define" "_srcdefattr (-,root,root)")
     if test "$DO_CHECKS" != true ; then
-	rpmbopts[${#rpmbopts[@]}]="--nocheck"
+	if chroot "$BUILD_ROOT" "$rpmbuild" --nocheck --help >/dev/null 2>&1; then
+	    rpmbopts[${#rpmbopts[@]}]="--nocheck"
+	else
+	    echo "warning: --nocheck is not supported by this $rpmbuild version"
+	fi
     fi
     if test "$rpmbuild" == "rpmbuild" ; then
 	    # use only --nosignature for rpm v4
@@ -140,31 +142,11 @@ recipe_build_spec() {
 
     # su involves a shell which would require even more
     # complicated quoting to bypass than this
-    if test "$SHORT_CIRCUIT" = false ; then
-        rpmbopts[${#rpmbopts[@]}]="$BUILD_RPM_BUILD_STAGE"
-        toshellscript $rpmbuild \
-                "${definesnstuff[@]}" \
-                "${rpmbopts[@]}" \
-                "$TOPDIR/SOURCES/$RECIPEFILE" \
-                > $BUILD_ROOT/.build.command
-    else
-        rpmbopts[${#rpmbopts[@]}]='--short-circuit'
-        buildopts="-bc -bi -bb -bs"
-        cmds=""
-        echo "#!/bin/sh -x" >$BUILD_ROOT/.build.command
-        echo "set -e" >>$BUILD_ROOT/.build.command
-        for opt in $buildopts
-        do
-            shellquote $rpmbuild  \
-                    "${definesnstuff[@]}" \
-                    "${rpmbopts[@]}" $opt \
-                    "$TOPDIR/SOURCES/$RECIPEFILE" \
-                    >> $BUILD_ROOT/.build.command
-            echo >>$BUILD_ROOT/.build.command
-            [ "$opt" == "$BUILD_RPM_BUILD_STAGE" ] && break
-        done
-    fi
-
+    toshellscript $rpmbuild \
+	    "${definesnstuff[@]}" \
+	    "${rpmbopts[@]}" \
+	    "$TOPDIR/SOURCES/$RECIPEFILE" \
+	    > $BUILD_ROOT/.build.command
     chmod 755 $BUILD_ROOT/.build.command
     check_exit
     if test -n "$RUN_SHELL"; then
@@ -227,8 +209,7 @@ recipe_run_rpmlint() {
     mount -n -tproc none $BUILD_ROOT/proc 2> /dev/null
     chroot $BUILD_ROOT su -s /opt/testing/bin/rpmlint "$BUILD_USER" -- \
 	    --info ${LINT_RPM_FILE_LIST[*]#$BUILD_ROOT} \
-	    ${SRPM_FILE_LIST[*]#$BUILD_ROOT} > "$BUILD_ROOT$rpmlint_logfile" || ret=1
-    cat "$BUILD_ROOT$rpmlint_logfile"
+	    ${SRPM_FILE_LIST[*]#$BUILD_ROOT} > >(tee "$BUILD_ROOT$rpmlint_logfile") 2>&1 || ret=1
     echo
     umount -n $BUILD_ROOT/proc 2>/dev/null || true 
     if test "$ret" = 1 ; then 
