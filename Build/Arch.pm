@@ -91,6 +91,9 @@ sub parse {
   push @{$ret->{'deps'}}, @{$vars{'checkdepends'} || []};
   push @{$ret->{'deps'}}, @{$vars{'depends'} || []};
   $ret->{'source'} = $vars{'source'} if $vars{'source'};
+  # Maintain architecture-specific sources for officially supported architectures
+  $ret->{'source_x86_64'} = $vars{'source_x86_64'} if $vars{'source_x86_64'};
+  $ret->{'source_i686'} = $vars{'source_i686'} if $vars{'source_i686'};
   return $ret;
 }
 
@@ -249,6 +252,10 @@ sub parserepodata {
       push @{$d->{'conflicts'}}, @p;
     } elsif ($p eq '%REPLACES%') {
       push @{$d->{'obsoletes'}}, @p;
+    } elsif ($p eq '%MD5SUM%') {
+      $d->{'checksum_md5'} = $p[0];
+    } elsif ($p eq '%SHA256SUM%') {
+      $d->{'checksum_sha256'} = $p[0];
     }
   }
   return $d;

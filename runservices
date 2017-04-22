@@ -1,0 +1,92 @@
+#!/usr/bin/perl -w
+
+BEGIN {
+  unshift @INC, ($::ENV{'BUILD_DIR'} || '/usr/lib/build');
+}
+
+use POSIX;
+use File::Temp ();
+use File::Copy ();
+
+use strict;
+
+use Build::SimpleXML;
+
+my $servicedir = '/usr/lib/obs/service';
+my $buildroot = '';
+
+sub ls {
+  local *D;
+  opendir(D, $_[0]) || return ();
+  my @r = grep {$_ ne '.' && $_ ne '..'} readdir(D);
+  closedir D;
+  return @r;
+}
+
+sub run_services {
+  my ($xml) = @_;
+
+  my $servicexml = Build::SimpleXML::parse($xml);
+  die("not a valid _service file\n") unless $servicexml && $servicexml->{'services'};
+  $servicexml = $servicexml->{'services'}->[0];
+
+  my $tempdir;
+  if ($buildroot ne '') {
+    $tempdir = File::Temp::tempdir('CLEANUP' => 1, 'DIR' => "$buildroot/tmp");
+    die("bad tempdir\n") unless $tempdir =~ s/^\Q$buildroot\E//;
+  } else {
+    $tempdir = File::Temp::tempdir('CLEANUP' => 1);
+  }
+
+  # take default version setting
+  for my $s (@{$servicexml->{'service'} || []}) {
+    # buildtime only is default
+    next unless $s->{'mode'} && $s->{'mode'} eq 'buildtime';
+    die("missing name in service\n") unless $s->{'name'};
+
+    if (! -x "$buildroot$servicedir/$s->{'name'}") {
+      die("service '$s->{'name'}' configured to run, but is not available\n");
+    }
+
+    my @run;
+    push @run, "$servicedir/$s->{'name'}";
+    for my $param (@{$s->{'param'}}) {
+      next if $param->{'name'} eq 'outdir';
+      next unless $param->{'_content'};
+      push @run, "--$param->{'name'}";
+      push @run, $param->{'_content'};
+    }
+    push @run, "--outdir";
+    push @run, $tempdir;
+    my $pid = fork();
+    die("fork: $!\n") unless defined $pid;
+    if ($pid == 0) {
+      if ($buildroot ne '') {
+        chroot($buildroot) || die("chroot $buildroot: $!\n");
+      }
+      exec(@run);
+      die("$run[0]: $!\n");
+    }
+    1 while waitpid($pid, 0) != $pid;
+    die("service run failed for service '$s->{'name'}'\n") if $?;
+    # copy back
+    for my $file (grep {!/^[:\.]/} ls("$buildroot$tempdir")) {
+      File::Copy::move("$buildroot$tempdir/$file", $file) if -f "$buildroot$tempdir/$file";
+    }
+  }
+}
+
+if (@ARGV > 1 && $ARGV[0] eq '--buildroot') {
+  shift @ARGV;
+  $buildroot = shift @ARGV;
+  $buildroot = '' if $buildroot && $buildroot eq '/';
+  die("bad buildroot\n") unless $buildroot eq '' || $buildroot =~ /^\//;
+}
+
+local *F;
+open(F, '<', '_service') || die("_service: $!\n");
+my $xml = '';
+1 while sysread(F, $xml, 4096, length($xml)) > 0;
+close F;
+
+run_services($xml);

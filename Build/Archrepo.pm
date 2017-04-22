@@ -24,7 +24,21 @@ use strict;
 use Build::Arch;
 
 eval { require Archive::Tar; };
-*Archive::Tar::new = sub {die("Archive::Tar is not available\n")} unless defined &Archive::Tar::new;
+if (!defined &Archive::Tar::iter) {
+  *Archive::Tar::iter = sub {
+    my ($class, $filename) = @_;
+    die("Archive::Tar is not available\n") unless defined &Archive::Tar::new;
+    my $handle = $class->_get_handle($filename, 1, 'rb') or return undef;
+    my @data;
+    return sub {
+      return shift(@data) if !$handle || @data; 
+      my $files = $class->_read_tar($handle, { limit => 1 });
+      @data = @$files if (ref($files) || '') eq 'ARRAY';
+      undef $handle unless @data;
+      return shift @data;
+    };
+  };
+}
 
 sub addpkg {
   my ($res, $data, $options) = @_;
@@ -40,6 +54,14 @@ sub addpkg {
     $data->{'release'} = $1 if $data->{'version'} =~ s/-([^-]*)$//s;
   }
   $data->{'location'} = delete($data->{'filename'}) if exists $data->{'filename'};
+  if ($options->{'withchecksum'}) {
+    for (qw {md5 sha1 sha256}) {
+      my $c = delete($data->{"checksum_$_"});
+      $data->{'checksum'} = "$_:$c" if $c;
+    }     
+  } else {
+    delete $data->{"checksum_$_"} for qw {md5 sha1 sha256};
+  }
   if (ref($res) eq 'CODE') {
     $res->($data);
   } else {

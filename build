@@ -61,6 +61,7 @@ ABUILD_GID=399
 
 DO_INIT=true
 DO_BUILD=true
+DO_INIT_TOPDIR=true
 DO_LINT=
 DO_CHECKS=true
 SHORT_CIRCUIT=false
@@ -98,7 +99,6 @@ CCACHE=
 DLNOSIGNATURE=
 CACHE_DIR=/var/cache/build
 USEHIGHERDEPS=
-
 
 # This is for insserv
 export YAST_IS_RUNNING=instsys
@@ -288,7 +288,7 @@ Known Parameters:
 
   --vm-type TYPE
               Use virtual machine instead of chroot
-              TYPE is one of xen|kvm|uml|qemu|lxc|zvm|openstack|ec2
+              TYPE is one of xen|kvm|uml|qemu|lxc|zvm|openstack|ec2|docker|pvm
 
   --vm-worker GUEST
               GUEST is a z/VM build worker controlled by the controlling
@@ -328,6 +328,23 @@ Known Parameters:
   --vm-initrd FILE
               Kernel and initrd to use for VM (kvm and qemu only)
 
+  --vm-user   USERNAME
+              User name to run qemu/kvm process
+
+  --vm-telnet PORT
+              Is forwarding PORT to a telnet session inside of the VM.
+              Specify also needed extra packages via -x parameter, usually:
+                 --vm-telnet 1234 -x telnet-server -x net-tools
+              And connect from the host via
+                 telnet 1234
+              NOTE: The telnet server gets started after all packages got installed.
+
+  --vm-net OPTION
+  --vm-netdev OPTION
+  --vm-device OPTION
+              KVM only: Attach kvm option
+              Available options are -net, -netdev, -device
+	      (This options in kvm can not guarantee reproducible builds)
   --debug
               Enable creation of a debuginfo package
 
@@ -352,11 +369,18 @@ usage () {
 cleanup_and_exit () {
     trap EXIT
     test -z "$1" && set 0
-    rm -f $BUILD_ROOT/.repo.config
+	rm -f $BUILD_ROOT/.repo.config
     rm -f $BUILD_ROOT/exit
     if test "$1" -eq 1 -a -x /bin/df ; then
+        echo
+        echo "$HOST failed \"build $RECIPEFILE\" at `date --utc`."
+        echo
         # okay, it failed, but maybe because disk space?
 	if df $BUILD_ROOT 2>/dev/null | grep -q "100%"; then
+            df $BUILD_ROOT 2>/dev/null
+            echo
+            echo "$HOST ran out of disk space. Please try again."
+            echo
 	    set 3
         fi
     fi
@@ -367,14 +391,13 @@ cleanup_and_exit () {
     else
 	umount -n $BUILD_ROOT/proc/sys/fs/binfmt_misc 2> /dev/null || true
 	umount -n $BUILD_ROOT/proc 2>/dev/null || true
-	while true
-	do
-		umount -n $BUILD_ROOT/dev/pts 2>/dev/null
-		if test $? -ne 0; then
-			break
-		fi
-	done
-
+    while true
+    do
+            umount -n $BUILD_ROOT/dev/pts 2>/dev/null
+            if test $? -ne 0; then
+                    break
+            fi
+    done
 	umount -n $BUILD_ROOT/dev/shm 2>/dev/null || true
 	umount -n $BUILD_ROOT/sys 2>/dev/null || true
 	test -n "$VM_IMAGE" -a "$VM_IMAGE" != 1 && umount $BUILD_ROOT 2>/dev/null || true
@@ -430,13 +453,12 @@ setupccache() {
     fi
 }
 
-setupicecream()
-{
-    local icecreamdir="/var/run/icecream"
-    if test `readlink "$BUILD_ROOT/var/run"` = '/run' ; then
-        icecreamdir="/run/icecream"
+setupicecream() {
+    local icecreamdir=/var/run/icecream
+    if test "$(readlink "$BUILD_ROOT/var/run")" = /run ; then
+	icecreamdir=/run/icecream
     fi
-    if [ "$icecream" -eq 0 ]; then
+    if test "$icecream" -eq 0 ; then
 	rm -rf "$BUILD_ROOT$icecreamdir"
 	rm -f "$BUILD_ROOT/etc/profile.d/build_icecream.sh"
 	return 0
@@ -469,12 +491,12 @@ setupicecream()
     then
 	rm -rf "$BUILD_ROOT$icecreamdir"
 	mkdir -p "$BUILD_ROOT$icecreamdir"
-	if [ -e "$BUILD_ROOT"/usr/bin/create-env ]; then
-	  createenv=/usr/bin/create-env
-	elif [ -e "$BUILD_ROOT"/usr/lib/icecc/icecc-create-env ]; then
-	  createenv="/usr/lib/icecc/icecc-create-env /usr/bin/gcc /usr/bin/g++" # XXX
-	elif [ -e "$BUILD_ROOT"/usr/lib64/icecc/icecc-create-env ]; then
-	  createenv="/usr/lib64/icecc/icecc-create-env /usr/bin/gcc /usr/bin/g++" # XXX
+	if test -e "$BUILD_ROOT"/usr/bin/create-env ; then
+	    createenv=/usr/bin/create-env
+	elif test -e "$BUILD_ROOT"/usr/lib/icecc/icecc-create-env ; then
+	    createenv="/usr/lib/icecc/icecc-create-env /usr/bin/gcc /usr/bin/g++" # XXX
+	elif test -e "$BUILD_ROOT"/usr/lib64/icecc/icecc-create-env ; then
+	    createenv="/usr/lib64/icecc/icecc-create-env /usr/bin/gcc /usr/bin/g++" # XXX
 	else
 	    echo "create-env not found"
 	    return 1
@@ -502,11 +524,11 @@ setmemorylimit() {
 	case "$mem" in
 	    MemTotal:*)
 		set -- $mem
-		eval "limit=\$(($2/3*4))"
+		eval "limit=\$(($2/3*2))"
 	    ;;
 	    SwapTotal:*)
 		set -- $mem
-		eval "limit=\$(($2/3*4+$limit))"
+		eval "limit=\$(($2/3*2+$limit))"
 	    ;;
 	esac
     done < <(cat /proc/meminfo) # cat for proc stuff
@@ -521,7 +543,7 @@ create_baselibs() {
 
     BASELIBS_CFG=
 
-    if test "$BUILDTYPE" == arch ; then
+    if test "$BUILDTYPE" == arch || test "$BUILDTYPE" = collax ; then
 	return
     fi
     if test "$BUILDTYPE" == dsc ; then
@@ -691,7 +713,6 @@ hide_passwords()
     echo ${repos[@]}
 }
 
-
 #### main ####
 
 trap fail_exit EXIT
@@ -734,10 +755,11 @@ while test -n "$1"; do
 	cleanup_and_exit
       ;;
       -noinit|-no-init)
+	test "$DO_INIT" = false && DO_INIT_TOPDIR=false
 	DO_INIT=false
       ;;
       -no-build)
-       DO_BUILD=false
+    DO_BUILD=false
       ;;
       -nochecks|-no-checks)
 	DO_CHECKS=false
@@ -790,9 +812,9 @@ while test -n "$1"; do
       -baselibs-internal)
 	CREATE_BASELIBS=internal
 	;;
-      -keep-packs)
-        KEEP_PACKS="--keep-packs"
-        ;;
+	--keep-packs)
+	 KEEP_PACKS="--keep-packs"
+	;;
       -root)
 	needarg
 	BUILD_ROOT="$ARG"
@@ -832,10 +854,10 @@ while test -n "$1"; do
 	NOROOTFORBUILD=true
       ;;
       -short-circuit)
-        SHORT_CIRCUIT=true
+    SHORT_CIRCUIT=true
       ;;
       -no-topdir-cleanup)
-        NO_TOPDIR_CLEANUP=true
+    NO_TOPDIR_CLEANUP=true
       ;;
       -useusedforbuild)
 	USEUSEDFORBUILD="--useusedforbuild"
@@ -938,9 +960,9 @@ while test -n "$1"; do
 	echo "$ARG does not take an argument"
 	cleanup_and_exit
       ;;
-      -use-higher-deps)
-        USEHIGHERDEPS="--use-higher-deps"
-      ;;
+	  -use-higher-deps)
+	USEHIGHERDEPS="--use-higher-deps"
+	  ;;
       -*)
 	if vm_parse_options "$@" ; then
 	    set -- "${nextargs[@]}"
@@ -984,6 +1006,7 @@ fi
 
 if test -n "$CLEAN_BUILD" ; then
     DO_INIT=true
+    DO_INIT_TOPDIR=true
 fi
 
 if test -n "$VM_TYPE" -a -z "$RUNNING_IN_VM" ; then
@@ -1024,7 +1047,6 @@ fi
 
 mkdir_build_root
 hide_passwords
-
 if test "$BUILD_ROOT" = / ; then
     browner="$(stat -c %u /)"
 fi
@@ -1040,7 +1062,18 @@ if test -w /root ; then
 fi
 
 if test -z "$VM_IMAGE" -a -z "$LOGFILE" ; then
-    LOGFILE="$BUILD_ROOT/.build.log"
+    if test -z "$RUNNING_IN_VM"; then
+        LOGFILE="$BUILD_ROOT/.build.log"
+    else
+        # lxc and docker are special cases: vm shares logfile with host
+        case "$VM_TYPE" in
+        lxc|docker)
+            ;;
+        *)
+            LOGFILE="$BUILD_ROOT/.build.log"
+            ;;
+        esac
+    fi
 fi
 
 if test -n "$LOGFILE" -a -z "$RUN_SHELL" ; then
@@ -1151,6 +1184,7 @@ for RECIPEFILE in "${RECIPEFILES[@]}" ; do
 	test "$BUILDTYPE" = mock && CREATE_BUILD_BINARIES=--create-build-binaries
 	test "$BUILDTYPE" = debootstrap && CREATE_BUILD_BINARIES=--create-build-binaries
 	test "$BUILDTYPE" = livebuild && CREATE_BUILD_BINARIES=--create-build-binaries
+	test "$BUILDTYPE" = snapcraft && CREATE_BUILD_BINARIES=--create-build-binaries
 	set -- init_buildsystem --configdir "$CONFIG_DIR" --cachedir "$CACHE_DIR" "${definesnstuff[@]}" "${repos[@]}" $CLEAN_BUILD $DLNOSIGNATURE $KEEP_PACKS $USEHIGHERDEPS $USEUSEDFORBUILD $CREATE_BUILD_BINARIES $RPMLIST "$MYSRCDIR/$RECIPEFILE" $ADDITIONAL_PACKS
 	echo "$* ..."
         start_time=`date +%s`
@@ -1225,11 +1259,11 @@ for RECIPEFILE in "${RECIPEFILES[@]}" ; do
 	    chown "$ABUILD_UID:$ABUILD_GID" $BUILD_ROOT/home/abuild
 	else
 	    if ! egrep "^abuild:x?:${ABUILD_UID}:${ABUILD_GID}" >/dev/null <$BUILD_ROOT/etc/passwd ; then
-                sed -i '/^abuild:/d' $BUILD_ROOT/etc/passwd
-                sed -i '/^abuild:/d' $BUILD_ROOT/etc/group
-                echo "abuild:x:${ABUILD_UID}:${ABUILD_GID}:Autobuild:/home/abuild:/bin/bash" >>$BUILD_ROOT/etc/passwd
-                echo "abuild:x:${ABUILD_GID}:" >>$BUILD_ROOT/etc/group
-                chown "$ABUILD_UID:$ABUILD_GID" $BUILD_ROOT/home/abuild -R
+		    sed -i '/^abuild:/d' $BUILD_ROOT/etc/passwd
+		    sed -i '/^abuild:/d' $BUILD_ROOT/etc/group
+		    echo "abuild:x:${ABUILD_UID}:${ABUILD_GID}:Autobuild:/home/abuild:/bin/bash" >>$BUILD_ROOT/etc/passwd
+		    echo "abuild:x:${ABUILD_GID}:" >>$BUILD_ROOT/etc/group
+		    chown "$ABUILD_UID:$ABUILD_GID" $BUILD_ROOT/home/abuild -R
 	    fi
 	fi
 	if test -f $BUILD_ROOT/etc/shadow ; then
@@ -1264,16 +1298,46 @@ for RECIPEFILE in "${RECIPEFILES[@]}" ; do
     mount -n -ttmpfs none $BUILD_ROOT/dev/shm 2> /dev/null
 
     if test -n "$RUNNING_IN_VM" ; then
-	if test -x /sbin/ip ; then
-	    ip addr add 127.0.0.1/8 dev lo
-	    ip addr add ::1/128 dev lo
-	    ip link set lo up
-	else
-	    ifconfig lo 127.0.0.1 up
-	    ifconfig lo add ::1/128
-	fi
+        if test -x /sbin/ip ; then
+            ip addr add 127.0.0.1/8 dev lo
+            ip addr add ::1/128 dev lo
+            ip link set lo up
+        else
+            ifconfig lo 127.0.0.1 up
+            ifconfig lo add ::1/128
+        fi
+        if test -n "$VM_TELNET"; then
+            VM_TELNET_DEVICE=$( cd /sys/class/net/; echo * )
+            VM_TELNET_DEVICE=${VM_TELNET_DEVICE#lo }
+            VM_TELNET_DEVICE=${VM_TELNET_DEVICE%% *}
+	    if test -z "$VM_TELNET_DEVICE"; then
+	           echo "ERROR: no network device found for telnet server"
+                   cleanup_and_exit 1
+            fi
+            if test -x /sbin/ip ; then
+                   ip addr add 10.0.2.15/8 dev ${VM_TELNET_DEVICE}
+                   ip addr add ::1/24 dev ${VM_TELNET_DEVICE}
+                   ip link set ${VM_TELNET_DEVICE} up
+            else
+	           if ! test -x /sbin/ifconfig ; then
+	              echo "ERROR: /usr/sbin/in.telnetd is not running, please specify right package via -x option"
+                      cleanup_and_exit 1
+                   fi
+                   ifconfig ${VM_TELNET_DEVICE} 10.0.2.15 up
+                   ifconfig ${VM_TELNET_DEVICE} add ::1/24
+            fi  
+        fi
 	if test -n "$MYHOSTNAME" ; then
 	    hostname "$MYHOSTNAME"
+	fi
+	if test -n "$VM_TELNET"; then
+	    echo WARNING: telnet option used, setting up telnet server ${VM_TELNET_DEVICE}
+	    if test -x /usr/sbin/in.telnetd; then
+	       ( /usr/sbin/in.telnetd -L /.build/telnet_login_wrapper -debug 23 & )
+	    else
+		echo "ERROR: /usr/sbin/in.telnetd is not running, please specify right package via -x option"
+                cleanup_and_exit 1
+	    fi
 	fi
     fi
 
@@ -1299,6 +1363,28 @@ for RECIPEFILE in "${RECIPEFILES[@]}" ; do
 	echo "export SUSE_IGNORED_RPATHS=/etc/ld.so.conf" > "$BUILD_ROOT/etc/profile.d/buildsystem.sh"
     fi
 
+    cd $BUILD_ROOT$TOPDIR/SOURCES || cleanup_and_exit 1
+    for i in *.obscpio ; do
+	test -e "$i" || continue
+	echo "Unpacking $i ..."
+	echo "#!/bin/sh -e" > $BUILD_ROOT/.unpack.command
+	shellquote cd "$TOPDIR/SOURCES" >> $BUILD_ROOT/.unpack.command
+	echo >> $BUILD_ROOT/.unpack.command
+	echo -n 'cpio --extract --owner="'$BUILD_USER'" --unconditional --preserve-modification-time --make-directories <' >> $BUILD_ROOT/.unpack.command
+	shellquote "$i" >> $BUILD_ROOT/.unpack.command
+	echo >> $BUILD_ROOT/.unpack.command
+	shellquote rm -f "$i" >> $BUILD_ROOT/.unpack.command
+	echo >> $BUILD_ROOT/.unpack.command
+	chmod 0755 $BUILD_ROOT/.unpack.command
+	chroot $BUILD_ROOT su -c /.unpack.command - $BUILD_USER
+	rm -f $BUILD_ROOT/.unpack.command
+    done
+
+    if  test -e _service; then
+	echo "Running build time source services..."
+	$BUILD_DIR/runservices --buildroot "$BUILD_ROOT" || cleanup_and_exit 1
+    fi
+
     # get rid of old src dir, it is no longer needed and just wastes space
     test "$MYSRCDIR" = $BUILD_ROOT/.build-srcdir && rm -rf "$MYSRCDIR"
 
@@ -1307,8 +1393,6 @@ for RECIPEFILE in "${RECIPEFILES[@]}" ; do
 
     # hmmm
     chown -R "$ABUILD_UID:$ABUILD_GID" "$BUILD_ROOT$TOPDIR"
-
-    cd $BUILD_ROOT$TOPDIR/SOURCES || cleanup_and_exit 1
 
     echo -----------------------------------------------------------------
     if test "$BUILD_USER" = root ; then
