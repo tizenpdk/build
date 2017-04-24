@@ -524,11 +524,11 @@ setmemorylimit() {
 	case "$mem" in
 	    MemTotal:*)
 		set -- $mem
-		eval "limit=\$(($2/3*2))"
+		eval "limit=\$(($2/3*4))"
 	    ;;
 	    SwapTotal:*)
 		set -- $mem
-		eval "limit=\$(($2/3*2+$limit))"
+		eval "limit=\$(($2/3*4+$limit))"
 	    ;;
 	esac
     done < <(cat /proc/meminfo) # cat for proc stuff
@@ -812,8 +812,8 @@ while test -n "$1"; do
       -baselibs-internal)
 	CREATE_BASELIBS=internal
 	;;
-	--keep-packs)
-	 KEEP_PACKS="--keep-packs"
+      -keep-packs)
+    KEEP_PACKS="--keep-packs"
 	;;
       -root)
 	needarg
