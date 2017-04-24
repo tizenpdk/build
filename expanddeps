@@ -162,7 +162,7 @@ if (!defined($dist) || $dist eq '') {
   print STDERR "Warning: distribution not specified, assuming '$dist' (see $configdir).\n";
 }
 
-my $cf = Build::read_config_dist($dist, $archs[0], $configdir);
+$cf = Build::read_config_dist($dist, $archs[0], $configdir);
 $cf->{'warnings'} = 1;
 
 my $dofileprovides = %{$cf->{'fileprovides'}};
@@ -427,7 +427,7 @@ if ($useusedforbuild) {
 }
 
 #######################################################################
-
+my @packdeps;
 my $subpacks = [];
 
 my $buildtype = '';
