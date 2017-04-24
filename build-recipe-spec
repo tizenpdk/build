@@ -27,10 +27,13 @@ recipe_setup_spec() {
 	echo "Error: TOPDIR empty"
 	cleanup_and_exit 1
     fi
-    test "$DO_INIT_TOPDIR" = false || rm -rf "$BUILD_ROOT$TOPDIR"
-    for i in BUILD RPMS/`uname -m` RPMS/i386 RPMS/noarch SOURCES SPECS SRPMS BUILDROOT OTHER ; do
-	mkdir -p $BUILD_ROOT$TOPDIR/$i
-    done
+    if [ "$NO_TOPDIR_CLEANUP" = false ]; then
+	    rm -rf "$BUILD_ROOT$TOPDIR"
+	    for i in BUILD RPMS/`uname -m` RPMS/i386 RPMS/noarch SOURCES SPECS SRPMS BUILDROOT OTHER ; do
+	        mkdir -p $BUILD_ROOT$TOPDIR/$i
+	     done
+    fi
+
     chown -R "$ABUILD_UID:$ABUILD_GID" "$BUILD_ROOT$TOPDIR"
     mkdir -p $BUILD_ROOT$TOPDIR/SOURCES
     cp -p "$MYSRCDIR"/* $BUILD_ROOT$TOPDIR/SOURCES/
@@ -56,7 +59,9 @@ recipe_prepare_spec() {
 	mv $BUILD_ROOT/usr/lib/rpm/rpmrc $BUILD_ROOT/usr/lib/rpm/rpmrc_i586
 	sed -e 's/^buildarchtranslate: athlon.*/buildarchtranslate: athlon: i686/' -e 's/^buildarchtranslate: i686.*/buildarchtranslate: i686: i686/' < $BUILD_ROOT/usr/lib/rpm/rpmrc_i586 > $BUILD_ROOT/usr/lib/rpm/rpmrc
     fi
-
+    if test "$DO_BUILD" = false ; then
+        cleanup_and_exit 0
+    fi
     # extract macros from configuration
     queryconfig rawmacros --dist "$BUILD_DIST" --archpath "$BUILD_ARCH" --configdir "$CONFIG_DIR" > $BUILD_ROOT/root/$rawcfgmacros
     if test -n "$BUILD_DEBUG" && test "$BUILDTYPE" != debbuild ; then
@@ -112,7 +117,7 @@ recipe_build_spec() {
     test "$BUILDTYPE" = debbuild && rpmbuild=debbuild
 
     # XXX: move _srcdefattr to macro file?
-    rpmbopts=("$BUILD_RPM_BUILD_STAGE" "--define" "_srcdefattr (-,root,root)")
+    rpmbopts=("--define" "_srcdefattr (-,root,root)")
     if test "$DO_CHECKS" != true ; then
 	if chroot "$BUILD_ROOT" "$rpmbuild" --nocheck --help >/dev/null 2>&1; then
 	    rpmbopts[${#rpmbopts[@]}]="--nocheck"
@@ -142,11 +147,31 @@ recipe_build_spec() {
 
     # su involves a shell which would require even more
     # complicated quoting to bypass than this
-    toshellscript $rpmbuild \
-	    "${definesnstuff[@]}" \
-	    "${rpmbopts[@]}" \
-	    "$TOPDIR/SOURCES/$RECIPEFILE" \
-	    > $BUILD_ROOT/.build.command
+	if test "$SHORT_CIRCUIT" = false ; then
+	    rpmbopts[${#rpmbopts[@]}]="$BUILD_RPM_BUILD_STAGE"
+	    toshellscript $rpmbuild \
+	            "${definesnstuff[@]}" \
+	            "${rpmbopts[@]}" \
+	            "$TOPDIR/SOURCES/$RECIPEFILE" \
+	            > $BUILD_ROOT/.build.command
+	else
+	    rpmbopts[${#rpmbopts[@]}]='--short-circuit'
+	    buildopts="-bc -bi -bb -bs"
+	    cmds=""
+	    echo "#!/bin/sh -x" >$BUILD_ROOT/.build.command
+	    echo "set -e" >>$BUILD_ROOT/.build.command
+	    for opt in $buildopts
+	    do
+	        shellquote $rpmbuild  \
+	                "${definesnstuff[@]}" \
+	                "${rpmbopts[@]}" $opt \
+	                "$TOPDIR/SOURCES/$RECIPEFILE" \
+	                >> $BUILD_ROOT/.build.command
+	        echo >>$BUILD_ROOT/.build.command
+	        [ "$opt" == "$BUILD_RPM_BUILD_STAGE" ] && break
+	    done
+	fi
+	
     chmod 755 $BUILD_ROOT/.build.command
     check_exit
     if test -n "$RUN_SHELL"; then

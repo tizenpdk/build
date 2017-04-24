@@ -1019,7 +1019,8 @@ sub expand {
     @q = nevrmatch($config, $r, @q) if /^!!/;
     $aconflicts{$_} = "is in BuildConflicts" for @q;
   }
-
+   my %recommended;
+   my @rec_todo;
   @p = grep {!/^[-!]/} @p;
   my %p;		# expanded packages
 
