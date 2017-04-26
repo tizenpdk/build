@@ -1,3 +1,9 @@
+build (20150115-tizen20170428) unstable; urgency=high
+
+  * update tizen version to tizen20170428
+
+ -- Wang Jun <junbill.wang@samsung.com>  Fri, 28 Apr 2017 12:00:00 +0800
+
 build (20150115-tizen20170405) unstable; urgency=high
 
   * update tizen version to tizen20170405
