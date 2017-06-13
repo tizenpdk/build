@@ -88,7 +88,7 @@ for my $url (@ARGV) {
    }
   }
   $ua->env_proxy  if $url->scheme ne 'https';
-  my $dest = "$dir/".basename($url->path);
+  my $dest = "$dir/".basename($url->path).".tmp";
   unlink($dest);	# just in case
   my $retry = 3;
   while ($retry--) {
@@ -98,6 +98,7 @@ for my $url (@ARGV) {
 	die "reqesting " . hide_passwd($original) . " failed: ".$res->status_line."\n" unless $retry && $res->previous;
 	warn "retrying " . hide_passwd($original) . "\n";
   }
+  rename($dest, "$dir/".basename($url->path));
 }
 
 # vim:sw=2
