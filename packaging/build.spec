@@ -72,7 +72,7 @@ Requires:       build-mkbaselibs
 %if 0%{?suse_version} > 1120 || 0%{?mdkversion}
 Recommends:     build-mkdrpms
 %endif
-Provides:   tizen-build = 20170428
+Provides:   tizen-build = 20170630
 %description
 This package provides a script for building RPMs for SUSE Linux in a
 chroot environment.
@@ -116,7 +116,7 @@ Group:          Development/Tools/Building
 Requires:       build
 BuildRequires:  gcc
 BuildRequires:  glibc-devel
-Provides:       tizen-build-initvm-%{initvm_arch} = 20170428
+Provides:       tizen-build-initvm-%{initvm_arch} = 20170630
 Obsoletes:      build-initvm
 %if 0%{?suse_version}
 BuildRequires:  glibc-devel-static
@@ -194,6 +194,8 @@ test -e default.conf
 /usr/lib/build/initvm.*
 
 %changelog
+* Fri Jun 30 2017 y0169.zhang@samsung.com
+- update tizen version to tizen20170630
 * Mon Apr 10 2017 shuai01.fu@samsung.com
 - update tizen version to tizen20170410
 * Wed Apr 5 2017 sk7.park@samsung.com
