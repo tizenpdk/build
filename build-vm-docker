@@ -32,8 +32,8 @@ vm_startup_docker() {
     local docker_server=`cat /etc/hosts | grep docker | cut  -f 1`
     local docker_port=`cat /etc/hosts | grep docker | cut  -f 2`
     docker_port=${docker_port#docker}
-    docker -H $docker_server:$docker_port rm "$name" >/dev/null 2>&1 || true
-    docker -H $docker_server:$docker_port run \
+    docker -H $docker_server:$docker_port rm --privileged "$name" >/dev/null 2>&1 || true
+    docker -H $docker_server:$docker_port run --privileged\
         --rm --name "$name" --cap-add=sys_admin --net=none \
         -v "$BUILD_ROOT:/mnt" busybox /bin/chroot /mnt "$vm_init_script"
     BUILDSTATUS="$?"
