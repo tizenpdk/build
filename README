@@ -1,5 +1,5 @@
 
-This   is a tool to build binary packages in a safe and reproducible
+This is  a tool to build binary packages in a safe and reproducible
 way. The default is to build in a chroot sandbox, but it also
 supports building in a virtual machine for better security.
 
