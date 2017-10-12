@@ -463,7 +463,13 @@ can_reuse_cached_package() {
     local cachepkgid pkgid xpkgid
     test -s "$1" || return 1
     if test -s "$BUILD_ROOT/.init_b_cache/rpms/$PKG.id" ; then
-	    pkgid=$(rpm -qp --qf "${RPMIDFMT}" $RPMCHECKOPTS_HOST "${1}")
+	local ep=$(rpm -qp --qf "%{EPOCH}" "${1}")
+	if test "$ep" != "(none)"; then
+	        RPMIDFMT_EP="%{NAME}-%{EPOCH}:%{VERSION}-%{RELEASE} %{BUILDTIME}-%{ARCH}\n"
+	        pkgid=`rpm -qp --qf "${RPMIDFMT_EP}" $RPMCHECKOPTS_HOST "${1}"`
+	else
+	        pkgid=`rpm -qp --qf "${RPMIDFMT}" $RPMCHECKOPTS_HOST "${1}"`
+	fi
 	read cachepkgid < $BUILD_ROOT/.init_b_cache/rpms/$PKG.id
 	# check if the build time is zero
 	case $cachepkgid in
@@ -1024,7 +1030,13 @@ for PKG in $MAIN_LIST ; do
    if test "$PSUF" != "rpm" ; then
        PKGID=$(perl -I$BUILD_DIR -MBuild -e Build::showquery "$BUILD_ROOT/.init_b_cache/rpms/$PKG.$PSUF" buildid)
    else
-       PKGID=`rpm -qp --qf "$RPMIDFMT" $RPMCHECKOPTS_HOST $BUILD_ROOT/.init_b_cache/rpms/$PKG.rpm`
+       ep=$(rpm -qp --qf "%{EPOCH}" "$BUILD_ROOT/.init_b_cache/rpms/$PKG.$PSUF")
+       if test "$ep" != "(none)"; then
+           RPMIDFMT_EP="%{NAME}-%{EPOCH}:%{VERSION}-%{RELEASE} %{BUILDTIME}-%{ARCH}\n"
+           pkgid=`rpm -qp --qf "${RPMIDFMT_EP}" $RPMCHECKOPTS_HOST "$BUILD_ROOT/.init_b_cache/rpms/$PKG.$PSUF"`
+       else
+           pkgid=`rpm -qp --qf "${RPMIDFMT}" $RPMCHECKOPTS_HOST "$BUILD_ROOT/.init_b_cache/rpms/$PKG.$PSUF"`
+       fi
    fi
 
     if test -f $BUILD_ROOT/.init_b_cache/alreadyinstalled/$PKG ; then
